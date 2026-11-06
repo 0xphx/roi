@@ -1,0 +1,1996 @@
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { FormEvent, ReactNode } from 'react';
+import {
+  Activity,
+  ArrowDownLeft,
+  ArrowDownToLine,
+  ArrowRight,
+  ArrowUpRight,
+  Bell,
+  BookOpen,
+  ChartNoAxesCombined,
+  Check,
+  CheckCheck,
+  ChevronDown,
+  ChevronRight,
+  CircleHelp,
+  Download,
+  ExternalLink,
+  FileUp,
+  Globe2,
+  LayoutDashboard,
+  ListFilter,
+  LoaderCircle,
+  Menu,
+  MoreHorizontal,
+  Plus,
+  RefreshCw,
+  Search,
+  Settings2,
+  ShieldCheck,
+  SlidersHorizontal,
+  Sparkles,
+  Star,
+  Target,
+  Trash2,
+  TrendingUp,
+  Wallet,
+  X,
+  Zap,
+} from 'lucide-react';
+import {
+  Area,
+  AreaChart,
+  CartesianGrid,
+  ComposedChart,
+  Line,
+  LineChart,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+  Cell,
+} from 'recharts';
+import type { Holding, Instrument, MarketResponse, Workspace } from './lib/types';
+import { currentPortfolio, portfolioHistory, riskMetrics } from './lib/analytics';
+import {
+  DEFAULT_WORKSPACE,
+  STORAGE_KEY,
+  downloadFile,
+  loadWorkspace,
+  parseHoldingsCsv,
+  parseWorkspace,
+} from './lib/workspace';
+import { CLASS_LABEL, dateLabel, decimal, euro, money, pct, shortDate } from './lib/format';
+import { INSTRUMENTS, INSTRUMENT_BY_SYMBOL } from './data/catalog';
+import snapshot from './data/market-snapshot.json';
+import { PlannerPage, RiskPage, StressPage, BacktestPage } from './components/AnalysisPages';
+
+type Page = 'overview' | 'portfolio' | 'planner' | 'risk' | 'stress' | 'backtest' | 'markets';
+const NAV: { id: Page; label: string; icon: typeof Wallet; group: string }[] = [
+  { id: 'overview', label: 'Übersicht', icon: LayoutDashboard, group: 'WORKSPACE' },
+  { id: 'portfolio', label: 'Mein Portfolio', icon: Wallet, group: 'WORKSPACE' },
+  { id: 'planner', label: 'Anlageplan', icon: Target, group: 'WORKSPACE' },
+  { id: 'risk', label: 'Risikoanalyse', icon: ShieldCheck, group: 'ANALYSE & SIMULATION' },
+  { id: 'stress', label: 'Stresstest', icon: Zap, group: 'ANALYSE & SIMULATION' },
+  {
+    id: 'backtest',
+    label: 'Backtesting',
+    icon: ChartNoAxesCombined,
+    group: 'ANALYSE & SIMULATION',
+  },
+  { id: 'markets', label: 'Märkte & Watchlist', icon: Globe2, group: 'ENTDECKEN' },
+];
+const tooltipStyle = {
+  border: '1px solid #e7ebee',
+  borderRadius: 12,
+  fontSize: 12,
+  boxShadow: '0 6px 24px #142b2220',
+};
+function getPage(): Page {
+  const hash = location.hash.slice(1);
+  return NAV.some((n) => n.id === hash) ? (hash as Page) : 'overview';
+}
+function IconBadge({
+  instrument,
+  size = 'normal',
+}: {
+  instrument: Instrument;
+  size?: 'normal' | 'small';
+}) {
+  return (
+    <span
+      className={`asset-icon ${size === 'small' ? 'asset-icon-small' : ''}`}
+      style={{ background: `${instrument.color}15`, color: instrument.color }}
+    >
+      {instrument.symbol === 'BTC-USD' ? (
+        '₿'
+      ) : instrument.symbol === 'ETH-USD' ? (
+        'Ξ'
+      ) : instrument.symbol === 'GLD' ? (
+        <Sparkles size={17} />
+      ) : (
+        instrument.symbol.slice(0, 2)
+      )}
+    </span>
+  );
+}
+function Delta({ value }: { value: number }) {
+  return (
+    <span
+      className={`delta ${Number.isFinite(value) ? (value >= 0 ? 'positive' : 'negative') : 'neutral'}`}
+    >
+      {Number.isFinite(value) &&
+        (value >= 0 ? <ArrowUpRight size={14} /> : <ArrowDownLeft size={14} />)}{' '}
+      {pct(value, true)}
+    </span>
+  );
+}
+function Modal({
+  title,
+  children,
+  onClose,
+  wide = false,
+}: {
+  title: string;
+  children: ReactNode;
+  onClose: () => void;
+  wide?: boolean;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+  useEffect(() => {
+    const prev = document.activeElement as HTMLElement;
+    const overflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    ref.current?.focus();
+    const key = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') closeRef.current();
+      if (e.key === 'Tab') {
+        const nodes = ref.current?.querySelectorAll<HTMLElement>(
+          'button,input,select,a[href],[tabindex="0"]',
+        );
+        if (!nodes?.length) return;
+        const first = nodes[0],
+          last = nodes[nodes.length - 1];
+        if (
+          e.shiftKey &&
+          (document.activeElement === first || document.activeElement === ref.current)
+        ) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
+    };
+    document.addEventListener('keydown', key);
+    return () => {
+      document.body.style.overflow = overflow;
+      document.removeEventListener('keydown', key);
+      prev?.focus();
+    };
+  }, []);
+  return (
+    <div
+      className="modal-overlay"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div
+        ref={ref}
+        className={`modal ${wide ? 'modal-wide' : ''}`}
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        tabIndex={-1}
+      >
+        <div className="modal-title">
+          <h2>{title}</h2>
+          <button className="icon-btn" aria-label="Schließen" onClick={onClose}>
+            <X size={20} />
+          </button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+export default function App() {
+  const [loaded] = useState(loadWorkspace);
+  const [workspace, setWorkspace] = useState<Workspace>(loaded.workspace);
+  const [market, setMarket] = useState<MarketResponse>(snapshot as MarketResponse);
+  const [page, setPage] = useState<Page>(getPage);
+  const [sidebar, setSidebar] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [notice, setNotice] = useState(loaded.error || '');
+  const [noticeError, setNoticeError] = useState(!!loaded.error);
+  const [dialog, setDialog] = useState<'search' | 'sources' | 'help' | 'settings' | null>(null);
+  const [edit, setEdit] = useState<Holding | 'new' | null>(null);
+  const [preselected, setPreselected] = useState('VTI');
+  const [selectedAsset, setSelectedAsset] = useState<string | null>(null);
+  const importRef = useRef<HTMLInputElement>(null);
+  const refreshing = useRef(false);
+  function notify(text: string, error = false) {
+    setNotice(text);
+    setNoticeError(error);
+  }
+  function update(next: Workspace) {
+    try {
+      const valid = parseWorkspace(next);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(valid));
+      setWorkspace(valid);
+      return true;
+    } catch (e) {
+      notify(
+        e instanceof DOMException
+          ? 'Der Browser konnte die Änderung nicht speichern. Prüfe den verfügbaren Speicher und exportiere eine Sicherung.'
+          : (e as Error).message,
+        true,
+      );
+      return false;
+    }
+  }
+  function navigate(next: Page) {
+    location.hash = next;
+    setPage(next);
+    setSidebar(false);
+    window.scrollTo({ top: 0 });
+  }
+  useEffect(() => {
+    const handler = () => setPage(getPage());
+    window.addEventListener('hashchange', handler);
+    return () => window.removeEventListener('hashchange', handler);
+  }, []);
+  useEffect(() => {
+    if (!notice) return;
+    const timeout = setTimeout(() => setNotice(''), 6500);
+    return () => clearTimeout(timeout);
+  }, [notice]);
+  async function refresh(manual = false) {
+    if (refreshing.current) return;
+    refreshing.current = true;
+    setLoading(true);
+    try {
+      const response = await fetch(`/api/market${manual ? '?refresh=1' : ''}`, {
+        signal: AbortSignal.timeout(30000),
+      });
+      if (!response.ok) throw new Error('Marktdaten konnten nicht geladen werden.');
+      const data = (await response.json()) as MarketResponse;
+      if (!data.series || !data.fx?.eurUsd) throw new Error('Ungültige Datenantwort.');
+      setMarket(data);
+      if (manual) {
+        const cached = Object.values(data.series).some((s) => s.status !== 'fresh');
+        notify(
+          cached
+            ? 'Daten geprüft. Einige Anbieter sind nicht erreichbar; der gekennzeichnete letzte Datenstand bleibt erhalten.'
+            : 'Marktdaten erfolgreich aktualisiert.',
+        );
+      }
+    } catch {
+      if (manual)
+        notify(
+          'Der Datenanbieter ist nicht erreichbar. Der zuletzt abgerufene Datenstand bleibt sichtbar.',
+          true,
+        );
+    } finally {
+      setLoading(false);
+      refreshing.current = false;
+    }
+  }
+  useEffect(() => {
+    void refresh();
+  }, []);
+  const portfolio = useMemo(
+    () => currentPortfolio(workspace.holdings, market.series, market.fx.eurUsd),
+    [workspace.holdings, market],
+  );
+  const history = useMemo(
+    () => portfolioHistory(workspace.holdings, market.series, market.fx.eurUsd),
+    [workspace.holdings, market],
+  );
+  const risk = useMemo(
+    () => riskMetrics(history, workspace.riskFreeRate),
+    [history, workspace.riskFreeRate],
+  );
+  function addAsset(symbol?: string) {
+    const existing = symbol ? workspace.holdings.find((h) => h.symbol === symbol) : undefined;
+    const next =
+      symbol ||
+      INSTRUMENTS.find((i) => !workspace.holdings.some((h) => h.symbol === i.symbol))?.symbol;
+    if (!next) {
+      notify(
+        'Alle verfügbaren Instrumente sind bereits enthalten. Bearbeite eine vorhandene Position.',
+      );
+      return;
+    }
+    setPreselected(next);
+    setEdit(existing || 'new');
+  }
+
+  function watch(symbol: string) {
+    update({
+      ...workspace,
+      watchlist: workspace.watchlist.includes(symbol)
+        ? workspace.watchlist.filter((s) => s !== symbol)
+        : [...workspace.watchlist, symbol],
+    });
+  }
+  async function importFile(file: File) {
+    try {
+      if (file.size > 1024 * 1024) throw new Error('Bitte eine Datei unter 1 MB wählen.');
+      const text = await file.text();
+      const next = file.name.toLowerCase().endsWith('.csv')
+        ? { ...workspace, holdings: parseHoldingsCsv(text) }
+        : JSON.parse(text);
+      if (update(parseWorkspace(next))) notify(`${file.name} wurde importiert.`);
+    } catch (e) {
+      notify((e as Error).message, true);
+    }
+  }
+  function exportJson() {
+    downloadFile(
+      `roi-workspace-${new Date().toISOString().slice(0, 10)}.json`,
+      JSON.stringify(workspace, null, 2),
+    );
+    notify('Dein Workspace wurde exportiert.');
+  }
+  const dates = Object.values(market.series)
+    .map((s) => s.asOf)
+    .filter(Boolean)
+    .sort();
+  const lastDate = dates[0];
+  const cached =
+    Object.values(market.series).some((s) => s.status !== 'fresh') || market.fx.status !== 'fresh';
+  const active = NAV.find((n) => n.id === page)!;
+  const common = { workspace, market, onChange: update };
+  return (
+    <div className="app-shell">
+      {sidebar && (
+        <button
+          className="sidebar-scrim"
+          aria-label="Menü schließen"
+          onClick={() => setSidebar(false)}
+        />
+      )}
+      <aside className={`sidebar ${sidebar ? 'sidebar-open' : ''}`}>
+        <button className="brand" onClick={() => navigate('overview')} aria-label="ROI Übersicht">
+          <span className="brand-mark">
+            <ChartNoAxesCombined size={25} strokeWidth={2.7} />
+          </span>
+          <span>
+            roi<span className="brand-dot">.</span>
+          </span>
+          <span className="brand-sub">INVESTMENT WORKSPACE</span>
+        </button>
+        <button className="workspace-switch" onClick={() => setDialog('settings')}>
+          <span className="workspace-avatar">J</span>
+          <span>
+            <strong>Mein Workspace</strong>
+            <small>Persönliche Finanzen</small>
+          </span>
+          <ChevronDown size={14} />
+        </button>
+        <nav aria-label="Hauptnavigation">
+          {NAV.map((nav, i) => (
+            <div key={nav.id}>
+              {(i === 0 || NAV[i - 1].group !== nav.group) && (
+                <div className="nav-group">{nav.group}</div>
+              )}
+              <button
+                className={`nav-link ${page === nav.id ? 'active' : ''}`}
+                onClick={() => navigate(nav.id)}
+                aria-current={page === nav.id ? 'page' : undefined}
+              >
+                <nav.icon size={18} />
+                <span>{nav.label}</span>
+                {nav.id === 'stress' && <span className="nav-tag">LAB</span>}
+                {page === nav.id && <span className="nav-active-dot" />}
+              </button>
+            </div>
+          ))}
+        </nav>
+        <div className="sidebar-bottom">
+          <div className="sidebar-promo">
+            <span className="promo-icon">
+              <Sparkles size={18} />
+            </span>
+            <h3>Aus Zielen wird Zukunft.</h3>
+            <p>Finde heraus, was dein Geld morgen bewegen kann.</p>
+            <button onClick={() => navigate('planner')}>
+              Anlageplan entdecken <ArrowUpRight size={16} />
+            </button>
+            <div className="promo-orbit" />
+          </div>
+          <button className="nav-link" onClick={() => setDialog('help')}>
+            <CircleHelp size={18} />
+            Hilfe & Methodik
+            <ArrowUpRight className="help-arrow" size={15} />
+          </button>
+          <div className="storage-indicator">
+            <span className="tiny-dot" /> Lokal gespeichert <ShieldCheck size={13} />
+          </div>
+        </div>
+      </aside>
+      <div className="main-shell">
+        <header className="topbar">
+          <div className="breadcrumb">
+            <button
+              className="icon-btn mobile-menu"
+              onClick={() => setSidebar(!sidebar)}
+              aria-label="Menü öffnen"
+            >
+              <Menu size={21} />
+            </button>
+            <span className="breadcrumb-root">Workspace</span>
+            <ChevronRight size={14} />
+            <strong>{active.label}</strong>
+          </div>
+          <div className="topbar-actions">
+            <button className="global-search" onClick={() => setDialog('search')}>
+              <Search size={16} />
+              <span>Wertpapier suchen</span>
+              <kbd>⌕</kbd>
+            </button>
+            <span className="topbar-divider" />
+            <button
+              className="icon-btn notification-btn"
+              onClick={() => setDialog('sources')}
+              aria-label="Datenstatus anzeigen"
+            >
+              <Bell size={18} />
+              {cached && <span />}
+            </button>
+            <button
+              className="profile-avatar"
+              onClick={() => setDialog('settings')}
+              aria-label="Workspace-Einstellungen"
+            >
+              J
+            </button>
+          </div>
+        </header>
+        <main className="main-content">
+          {page === 'overview' && (
+            <>
+              <div className="page-heading">
+                <div>
+                  <div className="eyebrow">
+                    <span className="tiny-dot" /> DEIN INVESTMENT-WORKSPACE
+                  </div>
+                  <h1>
+                    Dein Vermögen im Überblick<span className="heading-dot">.</span>
+                  </h1>
+                  <p className="muted">
+                    Verstehe dein Portfolio. Erkenne Risiken. Plane deinen nächsten Schritt.
+                  </p>
+                </div>
+                <div className="heading-actions">
+                  <button className="btn" onClick={exportJson}>
+                    <Download size={16} />
+                    Exportieren
+                  </button>
+                  <button className="btn btn-primary" onClick={() => addAsset()}>
+                    <Plus size={17} />
+                    Position hinzufügen
+                  </button>
+                </div>
+              </div>
+              <div className="overview-context">
+                <button className="portfolio-name" onClick={() => setDialog('settings')}>
+                  <Wallet size={15} />
+                  {workspace.portfolioName}
+                  <ChevronDown size={13} />
+                </button>
+                <button className="data-state" onClick={() => setDialog('sources')}>
+                  <span className={`tiny-dot ${cached ? 'amber' : ''}`} />
+                  {cached ? 'Gespeicherte Marktdaten' : 'Marktdaten aktualisiert'}
+                  <span className="data-date">Stand {dateLabel(lastDate)}</span>
+                </button>
+              </div>
+              <div className="grid-four kpi-grid">
+                <Metric
+                  label="Portfoliowert"
+                  value={euro(portfolio.value, 2)}
+                  icon={Wallet}
+                  note={
+                    <>
+                      <Delta value={portfolio.gainPercent} />
+                      <span>seit Einstand</span>
+                    </>
+                  }
+                />
+                <Metric
+                  label="Historische Wertentwicklung"
+                  value={pct(history.length > 1 ? risk.totalReturn : NaN, true)}
+                  icon={TrendingUp}
+                  note={
+                    <>
+                      <span className="tiny-dot" />
+                      <span>Heutiger Bestand, historisch gerechnet</span>
+                    </>
+                  }
+                />
+                <Metric
+                  label="Portfolio-Volatilität"
+                  value={pct(history.length >= 31 ? risk.volatility : NaN)}
+                  icon={Activity}
+                  note={
+                    <>
+                      <span className="badge neutral">
+                        {history.length >= 31
+                          ? risk.volatility < 0.1
+                            ? 'Niedrig'
+                            : risk.volatility < 0.2
+                              ? 'Moderat'
+                              : 'Erhöht'
+                          : 'Keine Daten'}
+                      </span>
+                      <span>annualisiert</span>
+                    </>
+                  }
+                />
+                <Metric
+                  label="Monatlicher Sparplan"
+                  value={euro(workspace.plan.monthlyContribution)}
+                  icon={Target}
+                  note={
+                    <button className="inline-link" onClick={() => navigate('planner')}>
+                      Deinen Anlageplan ansehen <ArrowRight size={13} />
+                    </button>
+                  }
+                />
+              </div>
+              <div className="overview-charts">
+                <PortfolioChart history={history} portfolioValue={portfolio.value} />
+                <AllocationCard
+                  positions={portfolio.positions}
+                  value={portfolio.value}
+                  onDetails={() => navigate('portfolio')}
+                />
+              </div>
+              <div className="section-heading">
+                <div>
+                  <h2>
+                    Deine Positionen{' '}
+                    <span className="count-badge">{workspace.holdings.length}</span>
+                  </h2>
+                  <p className="muted">Alles, was dein Portfolio bewegt.</p>
+                </div>
+                <button className="text-link" onClick={() => navigate('portfolio')}>
+                  Portfolio verwalten <ArrowRight size={15} />
+                </button>
+              </div>
+              <div className="card holdings-card">
+                <HoldingsTable
+                  workspace={workspace}
+                  market={market}
+                  onEdit={(h) => setEdit(h)}
+                  onDetails={setSelectedAsset}
+                />
+              </div>
+              <div className="section-heading market-section-heading">
+                <div>
+                  <h2>Die Märkte im Blick</h2>
+                  <p className="muted">Ein kleiner Ausschnitt. Das große Ganze.</p>
+                </div>
+                <button className="text-link" onClick={() => navigate('markets')}>
+                  Alle Märkte <ArrowRight size={15} />
+                </button>
+              </div>
+              <div className="market-strip">
+                {['SPY', 'QQQ', 'GLD', 'BTC-USD'].map((symbol) => (
+                  <MarketTile
+                    key={symbol}
+                    symbol={symbol}
+                    market={market}
+                    onClick={() => setSelectedAsset(symbol)}
+                  />
+                ))}
+              </div>
+              <div className="insight-banner">
+                <div className="insight-icon">
+                  <ShieldCheck size={23} />
+                </div>
+                <div>
+                  <strong>Wie krisenfest ist dein Portfolio?</strong>
+                  <p>Spiele Marktschocks durch und entdecke, wo dein Portfolio verwundbar ist.</p>
+                </div>
+                <button className="btn" onClick={() => navigate('stress')}>
+                  Stresstest starten <ArrowUpRight size={15} />
+                </button>
+              </div>
+            </>
+          )}
+          {page === 'portfolio' && (
+            <>
+              <div className="page-heading">
+                <div>
+                  <div className="eyebrow">DEIN KAPITAL, DEINE STRATEGIE</div>
+                  <h1>
+                    Mein Portfolio<span className="heading-dot">.</span>
+                  </h1>
+                  <p className="muted">
+                    Positionen verwalten und deine Allokation bewusst gestalten.
+                  </p>
+                </div>
+                <div className="heading-actions">
+                  <button className="btn" onClick={() => importRef.current?.click()}>
+                    <FileUp size={16} />
+                    Importieren
+                  </button>
+                  <button className="btn btn-primary" onClick={() => addAsset()}>
+                    <Plus size={16} />
+                    Position hinzufügen
+                  </button>
+                </div>
+              </div>
+              <div className="grid-three">
+                <Metric
+                  label="Portfoliowert"
+                  value={euro(portfolio.value, 2)}
+                  icon={Wallet}
+                  note={<span>{workspace.holdings.length} Positionen · Basiswährung EUR</span>}
+                />
+                <Metric
+                  label="Investiertes Kapital"
+                  value={euro(portfolio.cost, 2)}
+                  icon={ArrowDownToLine}
+                  note={<span>Einstand mit aktuellem Wechselkurs</span>}
+                />
+                <Metric
+                  label="Buchgewinn / -verlust"
+                  value={euro(portfolio.gain, 2)}
+                  icon={TrendingUp}
+                  note={<Delta value={portfolio.gainPercent} />}
+                />
+              </div>
+              <div className="card portfolio-management">
+                <div className="card-header">
+                  <h2>{workspace.portfolioName}</h2>
+                  <button
+                    className="btn btn-small"
+                    onClick={() => {
+                      downloadFile(
+                        'roi-positionen.csv',
+                        'symbol,quantity,averageCost,targetWeight\n' +
+                          workspace.holdings
+                            .map((h) =>
+                              [h.symbol, h.quantity, h.averageCost, h.targetWeight].join(','),
+                            )
+                            .join('\n'),
+                        'text/csv;charset=utf-8',
+                      );
+                      notify('Positionen als CSV exportiert.');
+                    }}
+                  >
+                    <Download size={14} />
+                    CSV exportieren
+                  </button>
+                </div>
+                <HoldingsTable
+                  workspace={workspace}
+                  market={market}
+                  onEdit={(h) => setEdit(h)}
+                  onDetails={setSelectedAsset}
+                  editable
+                />
+                <div className="table-footer">
+                  <span>
+                    <ShieldCheck size={14} /> Deine Positionen bleiben in diesem Browser.
+                  </span>
+                  <button className="inline-link" onClick={exportJson}>
+                    Workspace sichern <Download size={13} />
+                  </button>
+                </div>
+              </div>
+              <RebalanceCard workspace={workspace} market={market} onChange={update} />
+              <div className="note">
+                <BookOpen size={17} />
+                <span>
+                  <strong>CSV importieren:</strong> Spalten{' '}
+                  <code>symbol,quantity,averageCost,targetWeight</code>, Dezimalpunkt verwenden.
+                  Einstandspreise in der Handelswährung, Zielgewichte in Prozent. Ein Import ersetzt
+                  die Positionen; sichere deinen Workspace vorher über „Exportieren“.
+                </span>
+              </div>
+            </>
+          )}
+          {page === 'planner' && <PlannerPage {...common} />}
+          {page === 'risk' && <RiskPage {...common} />}
+          {page === 'stress' && <StressPage {...common} />}
+          {page === 'backtest' && <BacktestPage {...common} />}
+          {page === 'markets' && (
+            <MarketsPage
+              workspace={workspace}
+              market={market}
+              onWatch={watch}
+              onDetails={setSelectedAsset}
+              onAdd={addAsset}
+              onRefresh={() => refresh(true)}
+              loading={loading}
+            />
+          )}
+          <footer className="page-footer">
+            <span>
+              <span className="footer-logo">roi.</span> Mehr Klarheit. Bessere Entscheidungen.
+            </span>
+            <div>
+              <button onClick={() => setDialog('sources')}>Daten & Quellen</button>
+              <span>·</span>
+              <button onClick={() => setDialog('help')}>Methodik</button>
+              <span>·</span>
+              <span>Planung, keine Anlageberatung</span>
+            </div>
+          </footer>
+        </main>
+      </div>
+      <input
+        ref={importRef}
+        type="file"
+        accept=".json,.csv"
+        className="visually-hidden"
+        aria-label="Workspace importieren"
+        onChange={(e) => {
+          if (e.target.files?.[0]) void importFile(e.target.files[0]);
+          e.target.value = '';
+        }}
+      />
+      {notice && (
+        <div
+          className={`toast ${noticeError ? 'toast-error' : ''}`}
+          role={noticeError ? 'alert' : 'status'}
+        >
+          {noticeError ? <CircleHelp size={18} /> : <CheckCheck size={18} />}
+          <span>{notice}</span>
+          <button onClick={() => setNotice('')} aria-label="Meldung schließen">
+            <X size={15} />
+          </button>
+        </div>
+      )}
+      {edit && (
+        <PositionModal
+          holding={edit === 'new' ? undefined : edit}
+          initialSymbol={preselected}
+          market={market}
+          holdings={workspace.holdings}
+          onClose={() => setEdit(null)}
+          onSave={(holding) => {
+            const existing = workspace.holdings.some((h) => h.id === holding.id);
+            const saved = update({
+              ...workspace,
+              holdings: existing
+                ? workspace.holdings.map((h) => (h.id === holding.id ? holding : h))
+                : [...workspace.holdings, holding],
+            });
+            if (saved) {
+              setEdit(null);
+              notify(existing ? 'Position aktualisiert.' : 'Position hinzugefügt.');
+            }
+          }}
+          onDelete={(id) => {
+            update({ ...workspace, holdings: workspace.holdings.filter((h) => h.id !== id) });
+            setEdit(null);
+            notify('Position entfernt.');
+          }}
+        />
+      )}
+      {selectedAsset && (
+        <AssetModal
+          symbol={selectedAsset}
+          market={market}
+          watched={workspace.watchlist.includes(selectedAsset)}
+          onClose={() => setSelectedAsset(null)}
+          onWatch={() => watch(selectedAsset)}
+          onAdd={() => {
+            addAsset(selectedAsset);
+            setSelectedAsset(null);
+          }}
+        />
+      )}
+      {dialog === 'search' && (
+        <SearchModal
+          market={market}
+          onClose={() => setDialog(null)}
+          onSelect={(symbol) => {
+            setDialog(null);
+            setSelectedAsset(symbol);
+          }}
+        />
+      )}
+      {dialog === 'sources' && (
+        <Modal title="Datenstand & Quellen" onClose={() => setDialog(null)} wide>
+          <div className="source-intro">
+            <p className="muted">
+              Echte Tageskurse von Yahoo Finance, bei Ausfällen Stooq. Keine Echtzeitkurse. Ein
+              laufender Handelstag kann noch vorläufig sein.
+            </p>
+            <button className="btn btn-primary" disabled={loading} onClick={() => refresh(true)}>
+              <RefreshCw size={15} className={loading ? 'spinning' : ''} />
+              {loading ? 'Wird geprüft …' : 'Jetzt aktualisieren'}
+            </button>
+          </div>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Instrument</th>
+                  <th>Kursdatum</th>
+                  <th>Abruf</th>
+                  <th>Status</th>
+                  <th>Quelle</th>
+                </tr>
+              </thead>
+              <tbody>
+                {Object.values(market.series).map((s) => (
+                  <tr key={s.symbol}>
+                    <td>
+                      <strong>{s.symbol}</strong>
+                    </td>
+                    <td>{dateLabel(s.asOf)}</td>
+                    <td>
+                      {s.fetchedAt
+                        ? new Date(s.fetchedAt).toLocaleString('de-DE', {
+                            dateStyle: 'short',
+                            timeStyle: 'short',
+                          })
+                        : '—'}
+                    </td>
+                    <td>
+                      <span className={`badge ${s.status === 'fresh' ? 'positive' : 'neutral'}`}>
+                        {s.status === 'fresh'
+                          ? 'Aktualisiert'
+                          : s.status === 'cached'
+                            ? 'Gespeichert'
+                            : 'Nicht verfügbar'}
+                      </span>
+                    </td>
+                    <td>
+                      <a
+                        className="inline-link"
+                        href={s.sourceUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        {s.source.startsWith('Stooq') ? 'Stooq' : 'Yahoo Finance'}{' '}
+                        <ExternalLink size={11} />
+                      </a>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="note">
+            <Globe2 size={17} />
+            <span>
+              EZB-Referenzkurs vom {dateLabel(market.fx.date)}: 1 EUR ={' '}
+              {decimal(market.fx.eurUsd, 4)} USD (
+              {market.fx.status === 'fresh' ? 'aktualisiert' : 'gespeichert'}). Historische
+              EUR-Werte verwenden diesen konstanten Kurs; historische Währungseffekte werden nicht
+              abgebildet.{' '}
+              <a
+                href="https://www.ecb.europa.eu/stats/policy_and_exchange_rates/euro_reference_exchange_rates/html/index.en.html"
+                target="_blank"
+                rel="noreferrer"
+              >
+                Zur EZB
+              </a>
+            </span>
+          </div>
+          <p className="small muted">
+            Kursreihen sind nach Möglichkeit um Ausschüttungen und Splits bereinigt. Das eingebaute
+            Offline-Abbild enthält echte abgerufene Marktdaten. Ein Cache-Fallback behält Abruf- und
+            Kursdatum unverändert bei.
+          </p>
+        </Modal>
+      )}
+      {dialog === 'help' && (
+        <Modal title="So arbeitet dein Workspace" onClose={() => setDialog(null)} wide>
+          <div className="help-grid">
+            {[
+              {
+                icon: Wallet,
+                title: 'Dein Portfolio',
+                text: 'Das Startportfolio enthält frei gewählte Beispielbestände und Einstandspreise. Ersetze sie durch deine Positionen. Es werden keine Depotdaten automatisch eingelesen.',
+              },
+              {
+                icon: Activity,
+                title: 'Historische Analyse',
+                text: 'Die Übersicht rechnet den heutigen Bestand rückwirkend mit bereinigten Tageskursen. Sie zeigt eine Modellrechnung, keine tatsächliche Depotperformance. Nur gemeinsame Handelstage aller Positionen werden verwendet.',
+              },
+              {
+                icon: ShieldCheck,
+                title: 'Risiko verstehen',
+                text: 'Volatilität basiert auf täglichen Renditen, annualisiert mit 252 Handelstagen. VaR und Expected Shortfall beschreiben historische Tagesverluste auf 95%-Niveau. Sie begrenzen zukünftige Verluste nicht.',
+              },
+              {
+                icon: Zap,
+                title: 'Szenarien & Simulationen',
+                text: 'Stresstests sind frei veränderbare, hypothetische Schocks. Monte Carlo nutzt ein geometrisches Renditemodell mit konstanten Annahmen und festem Zufallsstartwert. Krisen und Extremverluste können unterschätzt werden.',
+              },
+              {
+                icon: ChartNoAxesCombined,
+                title: 'Backtesting',
+                text: 'Zielgewichte, Sparraten und laufende Gebühren werden auf tatsächliche gemeinsame Kurstage angewendet. Der S&P-500-ETF SPY dient als Vergleich. Steuern, Spreads, Handelsgebühren und historische Wechselkurse fehlen.',
+              },
+              {
+                icon: ShieldCheck,
+                title: 'Deine Daten',
+                text: 'Positionen und Pläne werden lokal im Browser gespeichert. Es gibt keine Cloud-Synchronisierung, Bankanbindung oder Orderausführung. Exportiere regelmäßig eine JSON-Sicherung. Die Kurs-API erhält nur Wertpapiersymbole.',
+              },
+            ].map((x) => (
+              <article key={x.title}>
+                <x.icon size={21} />
+                <h3>{x.title}</h3>
+                <p>{x.text}</p>
+              </article>
+            ))}
+          </div>
+          <div className="note">
+            Historische Renditen und Simulationen sind keine Prognose. Die Anwendung unterstützt
+            deine eigene Analyse; sie gibt keine persönlichen Kauf- oder Verkaufsempfehlungen.
+          </div>
+        </Modal>
+      )}
+      {dialog === 'settings' && (
+        <SettingsModal
+          workspace={workspace}
+          onClose={() => setDialog(null)}
+          onChange={update}
+          onExport={exportJson}
+          onImport={() => {
+            setDialog(null);
+            importRef.current?.click();
+          }}
+        />
+      )}
+    </div>
+  );
+}
+function Metric({
+  label,
+  value,
+  icon: Icon,
+  note,
+}: {
+  label: string;
+  value: string;
+  icon: typeof Wallet;
+  note: ReactNode;
+}) {
+  return (
+    <div className="card metric">
+      <div className="metric-top">
+        <span className="metric-label">{label}</span>
+        <Icon size={17} />
+      </div>
+      <div className="metric-value">{value}</div>
+      <div className="metric-note">{note}</div>
+    </div>
+  );
+}
+function PortfolioChart({
+  history,
+  portfolioValue,
+}: {
+  history: ReturnType<typeof portfolioHistory>;
+  portfolioValue: number;
+}) {
+  const [period, setPeriod] = useState('5J');
+  const [benchmark, setBenchmark] = useState(true);
+  const data = useMemo(() => {
+    if (period === '5J') return history;
+    const end = history.at(-1)?.date;
+    if (!end) return [];
+    const d = new Date(end);
+    d.setMonth(d.getMonth() - ({ '1M': 1, '6M': 6, '1J': 12, '3J': 36 }[period] || 60));
+    return history.filter((h) => h.date >= d.toISOString().slice(0, 10));
+  }, [history, period]);
+  const gain = data.length > 1 ? data.at(-1)!.value / data[0].value - 1 : NaN;
+  return (
+    <section className="card performance-card">
+      <div className="card-header">
+        <div>
+          <h2>
+            Portfolioentwicklung{' '}
+            <span
+              className="info-dot"
+              title="Modell des heutigen Bestands zu historischen Kursen, keine echte Depotentwicklung"
+            >
+              i
+            </span>
+          </h2>
+          <p className="muted">Dein Kapital im Zeitverlauf</p>
+        </div>
+        <div className="period-tabs" aria-label="Zeitraum">
+          {['1M', '6M', '1J', '3J', '5J'].map((p) => (
+            <button className={period === p ? 'selected' : ''} key={p} onClick={() => setPeriod(p)}>
+              {p}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="chart-summary">
+        <strong>{euro(portfolioValue, 2)}</strong>
+        <span className={`chart-gain ${gain >= 0 ? 'positive' : 'negative'}`}>
+          {pct(gain, true)} <span>im Zeitraum</span>
+        </span>
+      </div>
+      {data.length > 1 ? (
+        <div className="performance-chart">
+          <ResponsiveContainer width="100%" height="100%">
+            <ComposedChart data={data} margin={{ top: 15, right: 10, bottom: 0, left: 0 }}>
+              <defs>
+                <linearGradient id="portfolioGradient" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#0c8f7b" stopOpacity={0.18} />
+                  <stop offset="100%" stopColor="#0c8f7b" stopOpacity={0.005} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid vertical={false} stroke="#eef1f3" strokeDasharray="3 4" />
+              <XAxis
+                dataKey="date"
+                tickFormatter={shortDate}
+                minTickGap={70}
+                tick={{ fontSize: 11, fill: '#8a949f' }}
+                axisLine={false}
+                tickLine={false}
+                dy={10}
+              />
+              <YAxis
+                tickFormatter={(v) => `${Math.round(v / 1000)} Tsd.`}
+                width={63}
+                tick={{ fontSize: 10, fill: '#8a949f' }}
+                axisLine={false}
+                tickLine={false}
+                domain={['auto', 'auto']}
+              />
+              <Tooltip
+                contentStyle={tooltipStyle}
+                labelFormatter={(v) => dateLabel(String(v))}
+                formatter={(v, name) => [euro(Number(v)), name]}
+              />
+              {benchmark && (
+                <Line
+                  type="monotone"
+                  dataKey="benchmark"
+                  name="S&P 500 · normiert"
+                  stroke="#acb7ca"
+                  strokeWidth={1.5}
+                  strokeDasharray="5 5"
+                  dot={false}
+                  isAnimationActive={false}
+                />
+              )}
+              <Area
+                type="monotone"
+                dataKey="value"
+                name="Dein Portfolio"
+                stroke="#0b8c78"
+                strokeWidth={2.5}
+                fill="url(#portfolioGradient)"
+                isAnimationActive={false}
+              />
+            </ComposedChart>
+          </ResponsiveContainer>
+        </div>
+      ) : (
+        <div className="empty-state">
+          <ChartNoAxesCombined />
+          <h3>Hier wächst dein Überblick.</h3>
+          <p>Füge Positionen hinzu, um ihre Entwicklung zu sehen.</p>
+        </div>
+      )}
+      <div className="chart-legend">
+        <span>
+          <i style={{ background: '#0b8c78' }} />
+          Dein Portfolio
+        </span>
+        <button
+          onClick={() => setBenchmark(!benchmark)}
+          className={!benchmark ? 'legend-disabled' : ''}
+        >
+          <i style={{ background: '#acb7ca' }} />
+          S&P 500 <span className="legend-note">Vergleich</span>
+        </button>
+        <span className="legend-period">
+          {data[0] ? dateLabel(data[0].date) : '—'} –{' '}
+          {data.at(-1) ? dateLabel(data.at(-1)!.date) : '—'}
+        </span>
+      </div>
+    </section>
+  );
+}
+function AllocationCard({
+  positions,
+  value,
+  onDetails,
+}: {
+  positions: ReturnType<typeof currentPortfolio>['positions'];
+  value: number;
+  onDetails: () => void;
+}) {
+  const grouped = Object.entries(CLASS_LABEL)
+    .map(([key, name]) => ({
+      name,
+      value: positions
+        .filter((p) => INSTRUMENT_BY_SYMBOL[p.symbol].assetClass === key)
+        .reduce((s, p) => s + p.value, 0),
+      color: (
+        {
+          equity: '#0b8c78',
+          bond: '#8ebba8',
+          gold: '#d5ac55',
+          crypto: '#8e7dd0',
+          realestate: '#e38c67',
+        } as Record<string, string>
+      )[key],
+    }))
+    .filter((x) => x.value > 0);
+  return (
+    <section className="card allocation-card">
+      <div className="card-header">
+        <div>
+          <h2>Deine Allokation</h2>
+          <p className="muted">Vielfalt mit Strategie</p>
+        </div>
+        <button className="icon-btn" onClick={onDetails} aria-label="Allokation bearbeiten">
+          <MoreHorizontal size={19} />
+        </button>
+      </div>
+      <div className="donut-wrapper">
+        <ResponsiveContainer width="100%" height={190}>
+          <PieChart>
+            <Pie
+              data={grouped}
+              dataKey="value"
+              innerRadius={65}
+              outerRadius={83}
+              paddingAngle={3}
+              cornerRadius={4}
+              stroke="none"
+              startAngle={90}
+              endAngle={-270}
+              isAnimationActive={false}
+            >
+              {grouped.map((x) => (
+                <Cell key={x.name} fill={x.color} />
+              ))}
+            </Pie>
+            <Tooltip formatter={(v, name) => [euro(Number(v)), name]} contentStyle={tooltipStyle} />
+          </PieChart>
+        </ResponsiveContainer>
+        <div className="donut-center">
+          <span>Anlageklassen</span>
+          <strong>
+            {grouped.length}
+            <small> / 5</small>
+          </strong>
+          <span>nach Marktwert</span>
+        </div>
+      </div>
+      <div className="allocation-legend">
+        {grouped.map((g) => (
+          <div key={g.name}>
+            <span>
+              <i style={{ background: g.color }} />
+              {g.name}
+            </span>
+            <strong>{pct(g.value / value)}</strong>
+            <div className="allocation-meter">
+              <span style={{ width: `${(g.value / value) * 100}%`, background: g.color }} />
+            </div>
+          </div>
+        ))}
+      </div>
+      <button className="allocation-action" onClick={onDetails}>
+        Allokation optimieren <ArrowRight size={14} />
+      </button>
+    </section>
+  );
+}
+function HoldingsTable({
+  workspace,
+  market,
+  onEdit,
+  onDetails,
+  editable = false,
+}: {
+  workspace: Workspace;
+  market: MarketResponse;
+  onEdit: (h: Holding) => void;
+  onDetails: (s: string) => void;
+  editable?: boolean;
+}) {
+  const portfolio = currentPortfolio(workspace.holdings, market.series, market.fx.eurUsd);
+  return (
+    <div className="table-wrap">
+      <table className="holdings-table">
+        <thead>
+          <tr>
+            <th>Wertpapier</th>
+            <th>
+              Kurs <span>USD</span>
+            </th>
+            {editable && <th>Stück / Einstand</th>}
+            <th>
+              Marktwert <span>EUR</span>
+            </th>
+            <th>Gewinn / Verlust</th>
+            <th>Gewicht</th>
+            <th aria-label="Aktionen" />
+          </tr>
+        </thead>
+        <tbody>
+          {portfolio.positions.map((p) => {
+            const instrument = INSTRUMENT_BY_SYMBOL[p.symbol];
+            return (
+              <tr key={p.id}>
+                <td>
+                  <button className="asset-cell" onClick={() => onDetails(p.symbol)}>
+                    <IconBadge instrument={instrument} />
+                    <span>
+                      <strong>{instrument.shortName}</strong>
+                      <small>
+                        {p.symbol}
+                        <span className="asset-tag">{CLASS_LABEL[instrument.assetClass]}</span>
+                      </small>
+                    </span>
+                  </button>
+                </td>
+                <td className="numeric">
+                  {money(p.price)}
+                  <small className="cell-sub">{dateLabel(market.series[p.symbol]?.asOf)}</small>
+                </td>
+                {editable && (
+                  <td className="numeric">
+                    {decimal(p.quantity, 6)}
+                    <small className="cell-sub">{money(p.averageCost)}</small>
+                  </td>
+                )}
+                <td className="numeric strong">{euro(p.value, 2)}</td>
+                <td className="numeric">
+                  <span className={p.gain >= 0 ? 'positive' : 'negative'}>{euro(p.gain, 2)}</span>
+                  <small className={`cell-sub ${p.gain >= 0 ? 'positive' : 'negative'}`}>
+                    {pct(p.gainPercent, true)}
+                  </small>
+                </td>
+                <td>
+                  <div className="weight-cell">
+                    <span>{pct(p.weight)}</span>
+                    <div>
+                      <i
+                        style={{
+                          width: `${Math.min(100, p.weight * 100)}%`,
+                          background: instrument.color,
+                        }}
+                      />
+                    </div>
+                  </div>
+                </td>
+                <td>
+                  <button
+                    className="icon-btn"
+                    aria-label={`${instrument.shortName} bearbeiten`}
+                    onClick={() => onEdit(p)}
+                  >
+                    <MoreHorizontal size={18} />
+                  </button>
+                </td>
+              </tr>
+            );
+          })}
+          {!workspace.holdings.length && (
+            <tr>
+              <td colSpan={7}>
+                <div className="empty-state">
+                  <Wallet />
+                  <h3>Dein Portfolio beginnt hier.</h3>
+                  <p>Füge deine erste Position hinzu oder importiere eine Sicherung.</p>
+                </div>
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+function MarketTile({
+  symbol,
+  market,
+  onClick,
+}: {
+  symbol: string;
+  market: MarketResponse;
+  onClick: () => void;
+}) {
+  const instrument = INSTRUMENT_BY_SYMBOL[symbol],
+    prices = market.series[symbol]?.prices || [],
+    last = prices.at(-1)?.close || NaN,
+    prev = prices.at(-2)?.close || NaN;
+  const change = last / prev - 1;
+  return (
+    <button className="card market-tile" onClick={onClick}>
+      <div className="market-tile-top">
+        <IconBadge instrument={instrument} size="small" />
+        <strong>{instrument.shortName}</strong>
+        <ArrowUpRight size={14} />
+      </div>
+      <div className="market-tile-bottom">
+        <div>
+          <strong>{money(last)}</strong>
+          <Delta value={change} />
+        </div>
+        <div className="sparkline">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={prices.slice(-30)}>
+              <Line
+                dataKey="close"
+                stroke={change >= 0 ? '#15937e' : '#ce6a60'}
+                strokeWidth={1.7}
+                dot={false}
+                isAnimationActive={false}
+              />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+    </button>
+  );
+}
+function PositionModal({
+  holding,
+  initialSymbol,
+  market,
+  holdings,
+  onClose,
+  onSave,
+  onDelete,
+}: {
+  holding?: Holding;
+  initialSymbol: string;
+  market: MarketResponse;
+  holdings: Holding[];
+  onClose: () => void;
+  onSave: (h: Holding) => void;
+  onDelete: (id: string) => void;
+}) {
+  const [symbol, setSymbol] = useState(holding?.symbol || initialSymbol);
+  const [quantity, setQuantity] = useState(String(holding?.quantity || ''));
+  const [cost, setCost] = useState(
+    String(holding?.averageCost ?? market.series[symbol]?.prices.at(-1)?.close.toFixed(2) ?? ''),
+  );
+  const [weight, setWeight] = useState(String(holding?.targetWeight || 0));
+  const [error, setError] = useState('');
+  const [remove, setRemove] = useState(false);
+  function submit(e: FormEvent) {
+    e.preventDefault();
+    const q = Number(quantity),
+      c = Number(cost),
+      w = Number(weight);
+    if (
+      !quantity ||
+      !Number.isFinite(q) ||
+      q <= 0 ||
+      q > 1e10 ||
+      cost === '' ||
+      !Number.isFinite(c) ||
+      c < 0 ||
+      c > 1e9 ||
+      weight === '' ||
+      !Number.isFinite(w) ||
+      w < 0 ||
+      w > 100
+    ) {
+      setError(
+        'Bitte eine positive Stückzahl, einen gültigen Einstand und ein Zielgewicht von 0–100 % eingeben.',
+      );
+      return;
+    }
+    if (holdings.some((h) => h.symbol === symbol && h.id !== holding?.id)) {
+      setError('Dieses Instrument ist bereits enthalten. Bearbeite die vorhandene Position.');
+      return;
+    }
+    onSave({
+      id: holding?.id || crypto.randomUUID(),
+      symbol,
+      quantity: q,
+      averageCost: c,
+      targetWeight: w,
+    });
+  }
+  return (
+    <Modal title={holding ? 'Position bearbeiten' : 'Position hinzufügen'} onClose={onClose}>
+      <form onSubmit={submit}>
+        <div className="field">
+          <label htmlFor="position-symbol">Wertpapier</label>
+          <select
+            id="position-symbol"
+            value={symbol}
+            disabled={!!holding}
+            onChange={(e) => {
+              setSymbol(e.target.value);
+              setCost(String(market.series[e.target.value]?.prices.at(-1)?.close.toFixed(2) || ''));
+            }}
+          >
+            {INSTRUMENTS.map((i) => (
+              <option key={i.symbol} value={i.symbol}>
+                {i.symbol} · {i.shortName}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="form-grid">
+          <div className="field">
+            <label htmlFor="quantity">Stückzahl</label>
+            <input
+              id="quantity"
+              type="number"
+              min="0.00000001"
+              max="10000000000"
+              step="any"
+              required
+              value={quantity}
+              onChange={(e) => setQuantity(e.target.value)}
+              placeholder="z. B. 100"
+            />
+          </div>
+          <div className="field">
+            <label htmlFor="average-cost">Durchschn. Einstand (USD)</label>
+            <input
+              id="average-cost"
+              type="number"
+              min="0"
+              max="1000000000"
+              step="any"
+              required
+              value={cost}
+              onChange={(e) => setCost(e.target.value)}
+            />
+          </div>
+        </div>
+        <div className="field">
+          <label htmlFor="target-weight">Zielgewicht (%)</label>
+          <input
+            id="target-weight"
+            type="number"
+            min="0"
+            max="100"
+            step="any"
+            required
+            value={weight}
+            onChange={(e) => setWeight(e.target.value)}
+          />
+          <small>
+            Für Rebalancing und Backtesting. Alle Zielgewichte sollten zusammen 100 % ergeben.
+          </small>
+        </div>
+        {error && (
+          <p className="form-error" role="alert">
+            {error}
+          </p>
+        )}
+        <div className="note small">
+          Kurs: {money(market.series[symbol]?.prices.at(-1)?.close ?? NaN)} · Stand{' '}
+          {dateLabel(market.series[symbol]?.asOf)}. Der Einstand ist deine Annahme, kein automatisch
+          ermittelter Kaufpreis.
+        </div>
+        <div className="modal-actions">
+          {holding && (
+            <button
+              type="button"
+              className="btn btn-danger"
+              onClick={() => {
+                if (remove) onDelete(holding.id);
+                else setRemove(true);
+              }}
+            >
+              <Trash2 size={15} />
+              {remove ? 'Entfernen bestätigen' : 'Entfernen'}
+            </button>
+          )}
+          <span className="flex-spacer" />
+          <button className="btn" type="button" onClick={onClose}>
+            Abbrechen
+          </button>
+          <button className="btn btn-primary" type="submit">
+            <Check size={16} />
+            Speichern
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+function RebalanceCard({
+  workspace,
+  market,
+  onChange,
+}: {
+  workspace: Workspace;
+  market: MarketResponse;
+  onChange: (w: Workspace) => void;
+}) {
+  const portfolio = currentPortfolio(workspace.holdings, market.series, market.fx.eurUsd);
+  const sum = workspace.holdings.reduce((a, h) => a + h.targetWeight, 0);
+  return (
+    <section className="card rebalance-card">
+      <div className="card-header">
+        <div>
+          <h2>Deine Zielallokation</h2>
+          <p className="muted">
+            Abweichungen erkennen. Dein Portfolio wieder ins Gleichgewicht bringen.
+          </p>
+        </div>
+        <button
+          className="btn btn-small"
+          disabled={!workspace.holdings.length}
+          onClick={() =>
+            onChange({
+              ...workspace,
+              holdings: workspace.holdings.map((h) => ({
+                ...h,
+                targetWeight: 100 / workspace.holdings.length,
+              })),
+            })
+          }
+        >
+          <SlidersHorizontal size={14} />
+          Gleich gewichten
+        </button>
+      </div>
+      {Math.abs(sum - 100) > 0.01 && (
+        <div className="note">
+          Deine Zielgewichte ergeben {decimal(sum)} %. Bearbeite sie auf insgesamt 100 %, um
+          konkrete Rebalancing-Beträge zu erhalten.
+        </div>
+      )}
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Wertpapier</th>
+              <th>Aktuell</th>
+              <th>Ziel</th>
+              <th>Abweichung</th>
+              <th>Rechnerische Anpassung</th>
+            </tr>
+          </thead>
+          <tbody>
+            {portfolio.positions.map((p) => (
+              <tr key={p.id}>
+                <td>
+                  <strong>{INSTRUMENT_BY_SYMBOL[p.symbol].shortName}</strong>
+                </td>
+                <td>{pct(p.weight)}</td>
+                <td>{decimal(p.targetWeight)} %</td>
+                <td className={p.weight - p.targetWeight / 100 > 0 ? 'negative' : 'positive'}>
+                  {decimal((p.weight - p.targetWeight / 100) * 100)} Pp.
+                </td>
+                <td>
+                  {Math.abs(sum - 100) < 0.01
+                    ? euro((portfolio.value * p.targetWeight) / 100 - p.value, 2)
+                    : 'Zielgewichte prüfen'}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="card-footnote">
+        Positive Anpassung = Zukauf, negative = Verkauf. Ohne Transaktionskosten und Steuern; keine
+        Orderausführung.
+      </p>
+    </section>
+  );
+}
+function MarketsPage({
+  workspace,
+  market,
+  onWatch,
+  onDetails,
+  onAdd,
+  onRefresh,
+  loading,
+}: {
+  workspace: Workspace;
+  market: MarketResponse;
+  onWatch: (s: string) => void;
+  onDetails: (s: string) => void;
+  onAdd: (s: string) => void;
+  onRefresh: () => void;
+  loading: boolean;
+}) {
+  const [search, setSearch] = useState('');
+  const [filter, setFilter] = useState('all');
+  const rows = INSTRUMENTS.filter(
+    (i) =>
+      (filter === 'all' ||
+        (filter === 'watchlist' && workspace.watchlist.includes(i.symbol)) ||
+        filter === i.assetClass) &&
+      `${i.symbol} ${i.name} ${i.shortName}`.toLowerCase().includes(search.toLowerCase()),
+  );
+  return (
+    <>
+      <div className="page-heading">
+        <div>
+          <div className="eyebrow">KONTEXT FÜR DEINE ENTSCHEIDUNGEN</div>
+          <h1>
+            Märkte & Watchlist<span className="heading-dot">.</span>
+          </h1>
+          <p className="muted">
+            14 ausgewählte Instrumente. Echte Kurse. Deine persönliche Watchlist.
+          </p>
+        </div>
+        <button className="btn" onClick={onRefresh} disabled={loading}>
+          <RefreshCw size={16} className={loading ? 'spinning' : ''} />
+          {loading ? 'Wird aktualisiert …' : 'Kurse aktualisieren'}
+        </button>
+      </div>
+      <div className="market-strip">
+        {['SPY', 'QQQ', 'GLD', 'BTC-USD'].map((s) => (
+          <MarketTile key={s} symbol={s} market={market} onClick={() => onDetails(s)} />
+        ))}
+      </div>
+      <div className="card markets-card">
+        <div className="market-filters">
+          <div className="filter-tabs">
+            {[
+              ['all', 'Alle Märkte'],
+              ['watchlist', `Watchlist (${workspace.watchlist.length})`],
+              ['equity', 'Aktien'],
+              ['bond', 'Anleihen'],
+              ['crypto', 'Krypto'],
+            ].map(([key, label]) => (
+              <button
+                key={key}
+                className={filter === key ? 'selected' : ''}
+                onClick={() => setFilter(key)}
+              >
+                {key === 'watchlist' && <Star size={13} />} {label}
+              </button>
+            ))}
+          </div>
+          <div className="input-search">
+            <Search size={15} />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              aria-label="Märkte filtern"
+              placeholder="Symbol oder Name …"
+            />
+          </div>
+        </div>
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th aria-label="Watchlist" />
+                <th>Instrument</th>
+                <th>Kurs (USD)</th>
+                <th>Letzter Kurstag</th>
+                <th>30 Handelstage</th>
+                <th>Datenstand</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((i) => {
+                const prices = market.series[i.symbol]?.prices || [],
+                  last = prices.at(-1)?.close ?? NaN,
+                  prev = prices.at(-2)?.close ?? NaN,
+                  change = last / prev - 1;
+                return (
+                  <tr key={i.symbol}>
+                    <td>
+                      <button
+                        className={`icon-btn star-btn ${workspace.watchlist.includes(i.symbol) ? 'star-active' : ''}`}
+                        aria-label={`${i.shortName} ${workspace.watchlist.includes(i.symbol) ? 'aus Watchlist entfernen' : 'zur Watchlist hinzufügen'}`}
+                        onClick={() => onWatch(i.symbol)}
+                      >
+                        <Star
+                          size={17}
+                          fill={workspace.watchlist.includes(i.symbol) ? 'currentColor' : 'none'}
+                        />
+                      </button>
+                    </td>
+                    <td>
+                      <button className="asset-cell" onClick={() => onDetails(i.symbol)}>
+                        <IconBadge instrument={i} />
+                        <span>
+                          <strong>{i.shortName}</strong>
+                          <small>
+                            {i.symbol} · {CLASS_LABEL[i.assetClass]}
+                          </small>
+                        </span>
+                      </button>
+                    </td>
+                    <td className="numeric strong">{money(last)}</td>
+                    <td>
+                      <Delta value={change} />
+                    </td>
+                    <td>
+                      <div className="table-sparkline">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <LineChart data={prices.slice(-30)}>
+                            <Line
+                              dataKey="close"
+                              stroke={change >= 0 ? '#15937e' : '#ce6a60'}
+                              dot={false}
+                              strokeWidth={1.5}
+                              isAnimationActive={false}
+                            />
+                          </LineChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </td>
+                    <td>
+                      {dateLabel(market.series[i.symbol]?.asOf)}
+                      <small className="cell-sub">
+                        {market.series[i.symbol]?.status === 'fresh'
+                          ? 'Aktualisiert'
+                          : 'Gespeichert'}
+                      </small>
+                    </td>
+                    <td>
+                      <button className="btn btn-small" onClick={() => onAdd(i.symbol)}>
+                        <Plus size={14} />
+                        Portfolio
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+              {!rows.length && (
+                <tr>
+                  <td colSpan={7}>
+                    <div className="empty-state">
+                      <Search />
+                      <h3>Keine Treffer</h3>
+                      <p>Ändere deinen Suchbegriff oder füge Instrumente zur Watchlist hinzu.</p>
+                    </div>
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div className="note">
+        <Globe2 size={17} />
+        <span>
+          US-notierte ETFs dienen als liquide Marktproxies. Ihre Handelbarkeit in deinem Land kann
+          eingeschränkt sein. Tageskurse sind keine handelbaren Echtzeitangebote. Alle Instrumente
+          werden in USD gehandelt.
+        </span>
+      </div>
+    </>
+  );
+}
+function AssetModal({
+  symbol,
+  market,
+  watched,
+  onClose,
+  onWatch,
+  onAdd,
+}: {
+  symbol: string;
+  market: MarketResponse;
+  watched: boolean;
+  onClose: () => void;
+  onWatch: () => void;
+  onAdd: () => void;
+}) {
+  const i = INSTRUMENT_BY_SYMBOL[symbol],
+    s = market.series[symbol],
+    last = s?.prices.at(-1)?.close ?? NaN,
+    prev = s?.prices.at(-2)?.close ?? NaN;
+  return (
+    <Modal title={i.name} onClose={onClose} wide>
+      <div className="asset-detail-summary">
+        <IconBadge instrument={i} />
+        <div>
+          <span className="muted">
+            {symbol} · {CLASS_LABEL[i.assetClass]} · {i.region}
+          </span>
+          <h2>
+            {money(last)} <Delta value={last / prev - 1} />
+          </h2>
+        </div>
+        <span className="badge neutral">
+          {s?.status === 'fresh' ? 'Aktualisiert' : 'Gespeicherte Kurse'}
+        </span>
+      </div>
+      <div className="asset-detail-chart">
+        <ResponsiveContainer width="100%" height="100%">
+          <AreaChart data={s?.prices || []}>
+            <CartesianGrid vertical={false} stroke="#edf0f3" />
+            <XAxis
+              dataKey="date"
+              tickFormatter={shortDate}
+              minTickGap={60}
+              tick={{ fontSize: 11 }}
+              tickLine={false}
+              axisLine={false}
+            />
+            <YAxis
+              domain={['auto', 'auto']}
+              tick={{ fontSize: 11 }}
+              width={65}
+              tickFormatter={(v) => decimal(v, 0)}
+              tickLine={false}
+              axisLine={false}
+            />
+            <Tooltip
+              contentStyle={tooltipStyle}
+              labelFormatter={(v) => dateLabel(String(v))}
+              formatter={(v) => [money(Number(v)), 'Kurs']}
+            />
+            <Area
+              dataKey="close"
+              stroke={i.color}
+              fill={`${i.color}18`}
+              strokeWidth={2}
+              dot={false}
+              isAnimationActive={false}
+            />
+          </AreaChart>
+        </ResponsiveContainer>
+      </div>
+      <p className="small muted">
+        {s?.source} · Stand {dateLabel(s?.asOf)} · Ausschüttungs- und splitbereinigt, soweit vom
+        Anbieter geliefert. 5 Jahre.
+      </p>
+      <div className="modal-actions">
+        <a className="btn" href={s?.sourceUrl} target="_blank" rel="noreferrer">
+          Quelle <ExternalLink size={14} />
+        </a>
+        <span className="flex-spacer" />
+        <button className="btn" onClick={onWatch}>
+          <Star size={15} fill={watched ? 'currentColor' : 'none'} />
+          {watched ? 'Auf der Watchlist' : 'Zur Watchlist'}
+        </button>
+        <button className="btn btn-primary" onClick={onAdd}>
+          <Plus size={16} />
+          Zum Portfolio
+        </button>
+      </div>
+    </Modal>
+  );
+}
+function SearchModal({
+  market,
+  onClose,
+  onSelect,
+}: {
+  market: MarketResponse;
+  onClose: () => void;
+  onSelect: (s: string) => void;
+}) {
+  const [query, setQuery] = useState('');
+  const results = INSTRUMENTS.filter((i) =>
+    `${i.symbol} ${i.name} ${i.shortName}`.toLowerCase().includes(query.toLowerCase()),
+  );
+  return (
+    <Modal title="Wertpapier suchen" onClose={onClose}>
+      <div className="input-search search-large">
+        <Search size={19} />
+        <input
+          autoFocus
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Name, Symbol oder Anlageklasse"
+          aria-label="Wertpapier suchen"
+        />
+      </div>
+      <div className="search-results">
+        {results.map((i) => (
+          <button key={i.symbol} onClick={() => onSelect(i.symbol)}>
+            <IconBadge instrument={i} />
+            <span>
+              <strong>{i.shortName}</strong>
+              <small>
+                {i.symbol} · {CLASS_LABEL[i.assetClass]}
+              </small>
+            </span>
+            <span className="search-result-price">
+              {money(market.series[i.symbol]?.prices.at(-1)?.close ?? NaN)}
+              <ChevronRight size={15} />
+            </span>
+          </button>
+        ))}
+        {!results.length && (
+          <div className="empty-state">
+            <Search />
+            <p>Kein Instrument im aktuellen Universum gefunden.</p>
+          </div>
+        )}
+      </div>
+    </Modal>
+  );
+}
+function SettingsModal({
+  workspace,
+  onClose,
+  onChange,
+  onExport,
+  onImport,
+}: {
+  workspace: Workspace;
+  onClose: () => void;
+  onChange: (w: Workspace) => void;
+  onExport: () => void;
+  onImport: () => void;
+}) {
+  const [name, setName] = useState(workspace.portfolioName);
+  const [rate, setRate] = useState(String(workspace.riskFreeRate * 100));
+  return (
+    <Modal title="Mein Workspace" onClose={onClose}>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          onChange({ ...workspace, portfolioName: name, riskFreeRate: Number(rate) / 100 });
+          onClose();
+        }}
+      >
+        <div className="field">
+          <label htmlFor="portfolio-name">Portfolioname</label>
+          <input
+            id="portfolio-name"
+            value={name}
+            maxLength={80}
+            required
+            onChange={(e) => setName(e.target.value)}
+          />
+        </div>
+        <div className="field">
+          <label htmlFor="risk-free">Risikofreier Zins (% p. a.)</label>
+          <input
+            id="risk-free"
+            value={rate}
+            type="number"
+            min="-5"
+            max="30"
+            step="0.1"
+            required
+            onChange={(e) => setRate(e.target.value)}
+          />
+          <small>
+            Frei gewählte Annahme für die Sharpe Ratio, kein automatisch bezogener Marktzins.
+          </small>
+        </div>
+        <div className="settings-backup">
+          <h3>Deine Daten mitnehmen</h3>
+          <p className="muted">
+            Lokale Speicherung in diesem Browser. Sichere Positionen, Watchlist und Planungsannahmen
+            als JSON.
+          </p>
+          <button className="btn" type="button" onClick={onExport}>
+            <Download size={15} />
+            Workspace exportieren
+          </button>
+          <button className="btn" type="button" onClick={onImport}>
+            <FileUp size={15} />
+            Importieren
+          </button>
+        </div>
+        <div className="modal-actions">
+          <button className="btn" type="button" onClick={onClose}>
+            Schließen
+          </button>
+          <button className="btn btn-primary" type="submit">
+            Einstellungen speichern
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}

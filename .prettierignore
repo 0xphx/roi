@@ -1,0 +1,4 @@
+src/data/market-snapshot.json
+node_modules/
+dist/
+package-lock.json
