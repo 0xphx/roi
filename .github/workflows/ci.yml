@@ -17,3 +17,5 @@ jobs:
       - run: npm test
       - run: npm run build
       - run: node scripts/smoke-test.mjs
+      - run: npm run build:pages
+      - run: npm run smoke:pages

@@ -66,6 +66,7 @@ import {
 import { CLASS_LABEL, dateLabel, decimal, euro, money, pct, shortDate } from './lib/format';
 import { INSTRUMENTS, INSTRUMENT_BY_SYMBOL } from './data/catalog';
 import snapshot from './data/market-snapshot.json';
+import { loadMarketData } from './lib/market-client';
 import { PlannerPage, RiskPage, StressPage, BacktestPage } from './components/AnalysisPages';
 
 type Page = 'overview' | 'portfolio' | 'planner' | 'risk' | 'stress' | 'backtest' | 'markets';
@@ -202,6 +203,8 @@ function Modal({
   );
 }
 
+const PAGES_MODE = import.meta.env.MODE === 'github-pages';
+
 export default function App() {
   const [loaded] = useState(loadWorkspace);
   const [workspace, setWorkspace] = useState<Workspace>(loaded.workspace);
@@ -258,25 +261,28 @@ export default function App() {
     refreshing.current = true;
     setLoading(true);
     try {
-      const response = await fetch(`/api/market${manual ? '?refresh=1' : ''}`, {
-        signal: AbortSignal.timeout(30000),
+      const data = await loadMarketData({
+        manual,
+        pages: PAGES_MODE,
+        baseUrl: import.meta.env.BASE_URL,
       });
-      if (!response.ok) throw new Error('Marktdaten konnten nicht geladen werden.');
-      const data = (await response.json()) as MarketResponse;
-      if (!data.series || !data.fx?.eurUsd) throw new Error('Ungültige Datenantwort.');
       setMarket(data);
       if (manual) {
         const cached = Object.values(data.series).some((s) => s.status !== 'fresh');
         notify(
-          cached
-            ? 'Daten geprüft. Einige Anbieter sind nicht erreichbar; der gekennzeichnete letzte Datenstand bleibt erhalten.'
-            : 'Marktdaten erfolgreich aktualisiert.',
+          PAGES_MODE
+            ? 'Veröffentlichter Datenstand neu geladen. Das jeweilige Kursdatum findest du unter „Daten & Quellen“.'
+            : cached
+              ? 'Daten geprüft. Einige Anbieter sind nicht erreichbar; der gekennzeichnete letzte Datenstand bleibt erhalten.'
+              : 'Marktdaten erfolgreich aktualisiert.',
         );
       }
     } catch {
       if (manual)
         notify(
-          'Der Datenanbieter ist nicht erreichbar. Der zuletzt abgerufene Datenstand bleibt sichtbar.',
+          PAGES_MODE
+            ? 'Der veröffentlichte Datenstand ist gerade nicht erreichbar. Die zuletzt geladenen Kurse bleiben sichtbar.'
+            : 'Der Datenanbieter ist nicht erreichbar. Der zuletzt abgerufene Datenstand bleibt sichtbar.',
           true,
         );
     } finally {
@@ -490,7 +496,11 @@ export default function App() {
                 </button>
                 <button className="data-state" onClick={() => setDialog('sources')}>
                   <span className={`tiny-dot ${cached ? 'amber' : ''}`} />
-                  {cached ? 'Gespeicherte Marktdaten' : 'Marktdaten aktualisiert'}
+                  {PAGES_MODE
+                    ? 'Veröffentlichte Marktdaten'
+                    : cached
+                      ? 'Gespeicherte Marktdaten'
+                      : 'Marktdaten aktualisiert'}
                   <span className="data-date">Stand {dateLabel(lastDate)}</span>
                 </button>
               </div>
@@ -810,10 +820,12 @@ export default function App() {
             <p className="muted">
               Echte Tageskurse von Yahoo Finance, bei Ausfällen Stooq. Keine Echtzeitkurse. Ein
               laufender Handelstag kann noch vorläufig sein.
+              {PAGES_MODE &&
+                ' Die Online-Version erhält neue Daten durch einen täglichen Aktualisierungslauf. „Daten neu laden“ lädt den zuletzt erfolgreich veröffentlichten Stand. Bei Anbieterfehlern bleibt der letzte gültige Kurs erhalten.'}
             </p>
             <button className="btn btn-primary" disabled={loading} onClick={() => refresh(true)}>
               <RefreshCw size={15} className={loading ? 'spinning' : ''} />
-              {loading ? 'Wird geprüft …' : 'Jetzt aktualisieren'}
+              {loading ? 'Wird geprüft …' : PAGES_MODE ? 'Daten neu laden' : 'Jetzt aktualisieren'}
             </button>
           </div>
           <div className="table-wrap">
@@ -847,7 +859,9 @@ export default function App() {
                         {s.status === 'fresh'
                           ? 'Aktualisiert'
                           : s.status === 'cached'
-                            ? 'Gespeichert'
+                            ? PAGES_MODE
+                              ? 'Veröffentlicht'
+                              : 'Gespeichert'
                             : 'Nicht verfügbar'}
                       </span>
                     </td>
@@ -923,7 +937,11 @@ export default function App() {
               {
                 icon: ShieldCheck,
                 title: 'Deine Daten',
-                text: 'Positionen und Pläne werden lokal im Browser gespeichert. Es gibt keine Cloud-Synchronisierung, Bankanbindung oder Orderausführung. Exportiere regelmäßig eine JSON-Sicherung. Die Kurs-API erhält nur Wertpapiersymbole.',
+                text:
+                  'Positionen und Pläne werden lokal im Browser gespeichert. Es gibt keine Cloud-Synchronisierung, Bankanbindung oder Orderausführung. Exportiere regelmäßig eine JSON-Sicherung. ' +
+                  (PAGES_MODE
+                    ? 'Die Online-Version lädt ausschließlich öffentliche Kursdaten; deine Bestände werden dabei nicht übertragen.'
+                    : 'Die Kurs-API erhält nur Wertpapiersymbole.'),
               },
             ].map((x) => (
               <article key={x.title}>
@@ -1631,7 +1649,7 @@ function MarketsPage({
         </div>
         <button className="btn" onClick={onRefresh} disabled={loading}>
           <RefreshCw size={16} className={loading ? 'spinning' : ''} />
-          {loading ? 'Wird aktualisiert …' : 'Kurse aktualisieren'}
+          {loading ? 'Wird aktualisiert …' : PAGES_MODE ? 'Daten neu laden' : 'Kurse aktualisieren'}
         </button>
       </div>
       <div className="market-strip">

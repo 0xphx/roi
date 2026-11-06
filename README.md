@@ -2,6 +2,24 @@
 
 Eine deutschsprachige Anwendung zum Planen, Vergleichen und Testen von Investments. Die erste vollständige Version verbindet Portfolioverwaltung, echte historische Marktdaten, Sparplanung, Risikoanalyse, Stresstests und Backtesting in einem Workspace.
 
+## GitHub Pages
+
+Die Online-Version liegt unter [https://0xphx.github.io/roi/](https://0xphx.github.io/roi/). Bei Änderungen an `main` baut und veröffentlicht der Workflow `.github/workflows/pages.yml` die geprüfte statische Anwendung. Der Repository-Pfad `/roi/` wird für JavaScript, CSS, Favicon und Kursdatei berücksichtigt; die Navigation verwendet Hash-Links und funktioniert auch nach einem Neuladen.
+
+GitHub Pages stellt keinen eigenen API-Server bereit. Die Online-Version lädt deshalb `market-data.json` aus derselben Veröffentlichung. Ein täglicher GitHub-Actions-Lauf um **22:23 UTC** versucht neue echte Kursreihen und den EZB-Referenzkurs abzurufen. Erfolgreiche Abrufe werden je Instrument übernommen; bei Ausfällen bleiben die zuletzt veröffentlichten gültigen Reihen erhalten. Kurs- und Abrufdatum werden nicht auf den Veröffentlichungszeitpunkt umgeschrieben. „Daten neu laden“ lädt den aktuell veröffentlichten Stand und löst keinen unmittelbaren Anbieterabruf aus.
+
+Zeitgesteuerte Actions können verspätet starten; GitHub kann sie in öffentlichen Repositories nach längerer Inaktivität deaktivieren. Unter **Actions → GitHub Pages veröffentlichen → Run workflow** lässt sich die Aktualisierung auch manuell starten. Datenstand und Quelle bleiben in der App sichtbar. Positionen und Pläne verbleiben im Browser und werden nicht in die öffentliche Kursdatei geschrieben. Beim Wechsel von der lokalen zur Online-Adresse kannst du sie per JSON-Export und -Import übernehmen.
+
+Den reinen Pages-Build lokal prüfen:
+
+```sh
+npm run build:pages
+npm run smoke:pages
+npm run preview:pages
+```
+
+Die Vorschau läuft unter [http://127.0.0.1:4174/roi/](http://127.0.0.1:4174/roi/). Optional erzeugt `npm run refresh:pages` neue Daten in `.pages-data/market-data.json`; `PAGES_SITE_URL` setzt die vorher veröffentlichte Basisadresse für den Ausfallschutz. Ohne diese Datei verwendet der Build den echten versionierten Snapshot. `PAGES_BASE_PATH` überschreibt bei Bedarf `/roi/`, beispielsweise mit `/` für eine eigene Domain. Der Workflow übernimmt den Pfad aus der Pages-Konfiguration.
+
 ## Starten
 
 Voraussetzungen: Node.js ab 22.12 und npm.
@@ -57,7 +75,7 @@ Der mitgelieferte, tatsächlich heruntergeladene Snapshot in `src/data/market-sn
 - 1.827 Beobachtungen pro Kryptowährung vom 6. November 2021 bis 6. November 2026;
 - den EZB-Referenzkurs **1 EUR = 1,1165 USD**, datiert auf den 6. November 2026.
 
-Jede Kursreihe führt Quelle, Quellenlink, ursprünglichen Abrufzeitpunkt, letzten Kurstag und Verfügbarkeitsstatus mit. Die Oberfläche startet sofort mit dem Snapshot und aktualisiert anschließend über die API. Es werden keine Zufallskurse oder erfundenen Ersatzreihen erzeugt.
+Jede Kursreihe führt Quelle, Quellenlink, ursprünglichen Abrufzeitpunkt, letzten Kurstag und Verfügbarkeitsstatus mit. Die Oberfläche startet sofort mit dem Snapshot und lädt anschließend den veröffentlichten Pages-Datenstand beziehungsweise im Serverbetrieb die API. Es werden keine Zufallskurse oder erfundenen Ersatzreihen erzeugt. Statisch veröffentlichte Daten tragen immer den Status `cached`, auch wenn der Aktualisierungslauf sie gerade erst vom Anbieter abgerufen hat.
 
 | Status        | Bedeutung                                                                                                                                                                       |
 | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -67,7 +85,7 @@ Jede Kursreihe führt Quelle, Quellenlink, ursprünglichen Abrufzeitpunkt, letzt
 
 ## API
 
-Alle Endpunkte erlauben ausschließlich `GET` und liegen auf derselben Herkunft wie die Oberfläche.
+Diese Endpunkte gelten für den lokalen Entwicklungsserver und den Worker-Betrieb. GitHub Pages verwendet ausschließlich die statische Datei `market-data.json` unter dem Projektpfad und ruft keine `/api`-Endpunkte auf. Alle Server-Endpunkte erlauben ausschließlich `GET` und liegen auf derselben Herkunft wie die Oberfläche.
 
 | Endpunkt                            | Ergebnis                                                                             |
 | ----------------------------------- | ------------------------------------------------------------------------------------ |
@@ -115,9 +133,12 @@ Dezimalzahlen verwenden einen Punkt. Unterstützte Trenner sind Komma und Semiko
 - `src/components/AnalysisPages.tsx`: Anlageplanung, Risiko, Stress und Backtesting.
 - `src/lib/analytics.ts`: Reine, unabhängig testbare Rechenfunktionen.
 - `src/lib/workspace.ts`: Lokale Speicherung, Validierung und Import/Export.
+- `src/lib/market-client.ts`: Geprüfte Marktdatenantworten und getrennte Abrufwege für Pages und API.
 - `src/data/catalog.ts`: Unterstützte Instrumente und Anlageklassen.
 - `server/market.ts`: Anbieterzugriff, Parser, Cache, Zeitlimits und echte Fallbackdaten.
 - `scripts/refresh-data.ts`: Reproduzierbare Aktualisierung des versionierten Snapshots.
+- `scripts/refresh-pages-data.ts`: Teilweise Aktualisierung mit Erhalt neuerer veröffentlichter Daten bei Anbieterausfällen.
+- `scripts/build-pages.mjs` und `scripts/smoke-pages.mjs`: Statisches Veröffentlichungspaket und Prüfung aller Projektpfade und Daten.
 - `scripts/build-worker.mjs`: Bündelt Oberfläche und API in ein Worker-Modul.
 - `tests/`: Numerische Invarianten, Quellenparser und Validierungsfälle.
 

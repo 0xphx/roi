@@ -1,6 +1,6 @@
 {
   "name": "roi-investment-workspace",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "type": "module",
   "description": "Investmentplanung, echte Marktdaten und nachvollziehbare Risikoanalysen.",
@@ -12,7 +12,11 @@
     "check": "tsc -b",
     "refresh:data": "node --import tsx scripts/refresh-data.ts",
     "smoke": "npm run build && node scripts/smoke-test.mjs",
-    "format": "prettier --write src server tests scripts vite.config.ts index.html README.md --ignore-path .prettierignore"
+    "format": "prettier --write src server tests scripts vite.config.ts index.html README.md --ignore-path .prettierignore",
+    "build:pages": "tsc -b && vite build --mode github-pages && node scripts/build-pages.mjs",
+    "preview:pages": "vite preview --mode github-pages --host 127.0.0.1 --port 4174",
+    "refresh:pages": "node --import tsx scripts/refresh-pages-data.ts",
+    "smoke:pages": "node scripts/smoke-pages.mjs"
   },
   "dependencies": {
     "@vitejs/plugin-react": "latest",
