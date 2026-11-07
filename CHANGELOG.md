@@ -1,5 +1,12 @@
 # Änderungen
 
+## 1.0.2 — 2026-11-07
+
+- Minimalistische Oberfläche mit neutralen Farben, klarer Typografie und flachen Abschnitten.
+- Werbetexte, dekorative Badges, Profilattrappe und doppelte Marktübersicht entfernt.
+- Allokation als schlichte Übersicht statt Donut; Diagramme ohne Verläufe und Animationen.
+- Beschriftungen vereinheitlicht, Textkontrast verbessert und mobile Navigation für Tastaturbedienung korrigiert.
+
 ## 1.0.1 — 2026-11-06
 
 - Veröffentlichung auf GitHub Pages über einen geprüften Actions-Workflow.

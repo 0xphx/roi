@@ -15,18 +15,6 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import {
-  ArrowDownRight,
-  ArrowRight,
-  ChartNoAxesCombined,
-  CircleHelp,
-  FlaskConical,
-  Info,
-  RefreshCw,
-  ShieldCheck,
-  Target,
-  TrendingUp,
-} from 'lucide-react';
 import type { AssetClass, MarketResponse, MarketSeries, Plan, Workspace } from '../lib/types';
 import { backtest, monteCarlo, portfolioHistory, riskMetrics, stressTest } from '../lib/analytics';
 import { INSTRUMENTS } from '../data/catalog';
@@ -61,57 +49,37 @@ const compact = (value: number) =>
     : Math.abs(value) >= 1000
       ? `${number.format(value / 1000)} Tsd.`
       : number.format(value);
-const gridStroke = '#edf1f3';
+const gridStroke = '#e8e8e3';
 const tooltipStyle = {
-  border: '1px solid #e6ece9',
-  borderRadius: 12,
-  boxShadow: '0 8px 24px #152b1920',
+  border: '1px solid #e5e5e0',
+  borderRadius: 3,
+  boxShadow: 'none',
+  background: '#fff',
+  color: '#242424',
   fontSize: 12,
 };
-const assetClasses: { key: AssetClass; label: string; color: string }[] = [
-  { key: 'equity', label: 'Aktien & Aktien-ETFs', color: '#0b8c74' },
-  { key: 'bond', label: 'Anleihen', color: '#7c9db6' },
-  { key: 'gold', label: 'Gold', color: '#d5a546' },
-  { key: 'crypto', label: 'Kryptowährungen', color: '#9e8aca' },
-  { key: 'realestate', label: 'Immobilien', color: '#dc9d79' },
+const assetClasses: { key: AssetClass; label: string }[] = [
+  { key: 'equity', label: 'Aktien & Aktien-ETFs' },
+  { key: 'bond', label: 'Anleihen' },
+  { key: 'gold', label: 'Gold' },
+  { key: 'crypto', label: 'Kryptowährungen' },
+  { key: 'realestate', label: 'Immobilien' },
 ];
-function Heading({
-  eyebrow,
-  title,
-  text,
-  action,
-}: {
-  eyebrow: string;
-  title: string;
-  text: string;
-  action?: React.ReactNode;
-}) {
+function Heading({ title, text }: { title: string; text: string }) {
   return (
     <div className="page-heading">
       <div>
-        <span className="eyebrow">{eyebrow}</span>
         <h1>{title}</h1>
         <p className="muted">{text}</p>
       </div>
-      {action}
     </div>
   );
 }
-function Metric({
-  label,
-  value,
-  note,
-  positive,
-}: {
-  label: string;
-  value: string;
-  note?: string;
-  positive?: boolean;
-}) {
+function Metric({ label, value, note }: { label: string; value: string; note?: string }) {
   return (
     <div className="card metric">
       <div className="metric-label">{label}</div>
-      <div className={`metric-value${positive ? ' text-positive' : ''}`}>{value}</div>
+      <div className="metric-value">{value}</div>
       {note && <div className="metric-note">{note}</div>}
     </div>
   );
@@ -119,8 +87,7 @@ function Metric({
 function NoData({ children }: { children?: React.ReactNode }) {
   return (
     <div className="card empty-state">
-      <ChartNoAxesCombined size={34} />
-      <h3>Noch keine auswertbaren Kursdaten</h3>
+      <h3>Keine auswertbaren Kursdaten</h3>
       <p>
         {children ||
           'Füge im Portfolio Positionen hinzu und lade ihre Marktdaten. Für eine Analyse müssen gemeinsame Handelstage vorliegen.'}
@@ -130,10 +97,10 @@ function NoData({ children }: { children?: React.ReactNode }) {
 }
 function ModelNote({ children }: { children: React.ReactNode }) {
   return (
-    <div className="note analysis-note">
-      <Info size={16} />
-      <div>{children}</div>
-    </div>
+    <aside className="analysis-note">
+      <h4>Methodik</h4>
+      <p>{children}</p>
+    </aside>
   );
 }
 function NumberField({
@@ -229,24 +196,14 @@ export function PlannerPage({ workspace, market: _market, onChange }: AnalysisPa
   };
   return (
     <>
-      <Heading
-        eyebrow="DEIN WEG NACH VORN"
-        title="Aus Zielen wird ein Plan."
-        text="Spiele Sparraten, Zeithorizonte und Renditeannahmen durch."
-        action={
-          <span className="badge neutral">
-            <FlaskConical size={14} /> Modellrechnung
-          </span>
-        }
-      />
+      <Heading title="Anlageplan" text="Sparrate, Zeithorizont und Renditeannahmen vergleichen." />
       <div className="analysis-planner-grid">
         <form className="card analysis-form-card" onSubmit={run}>
           <div className="card-header">
             <div>
-              <h3>Deine Stellschrauben</h3>
-              <p className="muted">Alle Werte lassen sich anpassen.</p>
+              <h3>Annahmen</h3>
+              <p className="muted">Kapital und Sparrate</p>
             </div>
-            <Target size={19} />
           </div>
           <div className="form-grid">
             <NumberField
@@ -333,9 +290,7 @@ export function PlannerPage({ workspace, market: _market, onChange }: AnalysisPa
             </p>
           )}
           <button className="btn btn-primary analysis-full-button" type="submit">
-            <RefreshCw size={16} />
             {dirty ? 'Änderungen berechnen' : 'Plan berechnen'}
-            <ArrowRight size={16} />
           </button>
           <p className="analysis-form-foot">
             {workspace.plan.simulations.toLocaleString('de-DE')} simulierte Pfade · reproduzierbare
@@ -345,13 +300,12 @@ export function PlannerPage({ workspace, market: _market, onChange }: AnalysisPa
         <div className="analysis-stack">
           <div className="grid-three analysis-metrics">
             <Metric
-              label="Vermögen im Median"
+              label="Median des Endvermögens"
               value={projection ? money(projection.median) : '—'}
               note={`Nach ${workspace.plan.years} Jahren · nominal`}
-              positive
             />
             <Metric
-              label="Selbst eingezahlt"
+              label="Einzahlungen"
               value={projection ? money(projection.contributed) : '—'}
               note="Startkapital + monatliche Sparrate"
             />
@@ -364,13 +318,14 @@ export function PlannerPage({ workspace, market: _market, onChange }: AnalysisPa
           <div className="card analysis-chart-card">
             <div className="card-header">
               <div>
-                <h3>Deine mögliche Vermögensentwicklung</h3>
+                <h3>Vermögensentwicklung</h3>
                 <p className="muted">Der Korridor zeigt das 10. bis 90. Perzentil.</p>
               </div>
               <div className="analysis-segment">
                 <button
                   type="button"
                   className={tab === 'nominal' ? 'active' : ''}
+                  aria-pressed={tab === 'nominal'}
                   onClick={() => setTab('nominal')}
                 >
                   Nominal
@@ -378,6 +333,7 @@ export function PlannerPage({ workspace, market: _market, onChange }: AnalysisPa
                 <button
                   type="button"
                   className={tab === 'real' ? 'active' : ''}
+                  aria-pressed={tab === 'real'}
                   onClick={() => setTab('real')}
                 >
                   Kaufkraft
@@ -397,14 +353,14 @@ export function PlannerPage({ workspace, market: _market, onChange }: AnalysisPa
                     tickFormatter={(v) => `${v} J.`}
                     axisLine={false}
                     tickLine={false}
-                    tick={{ fontSize: 11, fill: '#89918e' }}
+                    tick={{ fontSize: 11, fill: '#73736e' }}
                     minTickGap={25}
                   />
                   <YAxis
                     tickFormatter={compact}
                     axisLine={false}
                     tickLine={false}
-                    tick={{ fontSize: 11, fill: '#89918e' }}
+                    tick={{ fontSize: 11, fill: '#73736e' }}
                     width={65}
                   />
                   <Tooltip
@@ -418,32 +374,35 @@ export function PlannerPage({ workspace, market: _market, onChange }: AnalysisPa
                     ]}
                   />
                   <Area
+                    isAnimationActive={false}
                     dataKey="band"
                     type="monotone"
                     stroke="none"
-                    fill="#d9eee5"
+                    fill="#e7e7e3"
                     name="80-%-Korridor"
                   />
                   <Line
+                    isAnimationActive={false}
                     dataKey="p50"
                     type="monotone"
-                    stroke="#0b8c74"
-                    strokeWidth={3}
+                    stroke="#242424"
+                    strokeWidth={1.8}
                     dot={false}
                     name="Median"
                   />
                   <Line
+                    isAnimationActive={false}
                     dataKey="contributions"
                     type="monotone"
-                    stroke="#9ba5ae"
+                    stroke="#96968e"
                     strokeDasharray="5 5"
                     strokeWidth={1.5}
                     dot={false}
                     name="Einzahlungen"
                   />
                   <Legend
-                    iconType="circle"
-                    iconSize={7}
+                    iconType="plainline"
+                    iconSize={16}
                     wrapperStyle={{ fontSize: 11, paddingTop: 18 }}
                   />
                 </ComposedChart>
@@ -545,14 +504,8 @@ export function RiskPage({ workspace, market, onChange }: AnalysisPageProps) {
   return (
     <>
       <Heading
-        eyebrow="VERSTEHEN, WAS DU HÄLTST"
-        title="Risiko sichtbar machen."
-        text="Kennzahlen, Verlustphasen und Zusammenhänge auf Basis historischer Kurse."
-        action={
-          <span className="badge neutral">
-            <ShieldCheck size={14} /> Historische Analyse
-          </span>
-        }
+        title="Risikoanalyse"
+        text="Historische Schwankungen, Verluste und Korrelationen deines Portfolios."
       />
       {!sufficient ? (
         <NoData>
@@ -586,10 +539,10 @@ export function RiskPage({ workspace, market, onChange }: AnalysisPageProps) {
           <div className="card analysis-chart-card">
             <div className="card-header">
               <div>
-                <h3>Jede Hochphase hat ihre Rücksetzer.</h3>
+                <h3>Drawdown</h3>
                 <p className="muted">Rückgang vom jeweils zuvor erreichten Höchststand.</p>
               </div>
-              <span className="badge neutral">
+              <span className="analysis-meta">
                 {date(history[0].date)} – {date(history[history.length - 1].date)}
               </span>
             </div>
@@ -600,12 +553,6 @@ export function RiskPage({ workspace, market, onChange }: AnalysisPageProps) {
             >
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={drawdowns} margin={{ top: 12, right: 16, left: 4, bottom: 0 }}>
-                  <defs>
-                    <linearGradient id="drawdownGradient" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="#d87967" stopOpacity={0.1} />
-                      <stop offset="100%" stopColor="#d87967" stopOpacity={0.4} />
-                    </linearGradient>
-                  </defs>
                   <CartesianGrid vertical={false} stroke={gridStroke} />
                   <XAxis
                     dataKey="date"
@@ -613,13 +560,13 @@ export function RiskPage({ workspace, market, onChange }: AnalysisPageProps) {
                       new Date(v).toLocaleDateString('de-DE', { year: '2-digit', month: 'short' })
                     }
                     minTickGap={70}
-                    tick={{ fontSize: 11, fill: '#89918e' }}
+                    tick={{ fontSize: 11, fill: '#73736e' }}
                     tickLine={false}
                     axisLine={false}
                   />
                   <YAxis
                     tickFormatter={(v) => `${v} %`}
-                    tick={{ fontSize: 11, fill: '#89918e' }}
+                    tick={{ fontSize: 11, fill: '#73736e' }}
                     tickLine={false}
                     axisLine={false}
                     width={60}
@@ -629,13 +576,14 @@ export function RiskPage({ workspace, market, onChange }: AnalysisPageProps) {
                     labelFormatter={(v) => date(String(v))}
                     formatter={(v) => [`${Number(v).toFixed(2)} %`, 'Drawdown']}
                   />
-                  <ReferenceLine y={0} stroke="#e0e5e2" />
+                  <ReferenceLine y={0} stroke="#bdbdb6" />
                   <Area
+                    isAnimationActive={false}
                     dataKey="drawdown"
                     type="monotone"
-                    fill="url(#drawdownGradient)"
-                    stroke="#c67566"
-                    strokeWidth={1.6}
+                    fill="#f2e7e4"
+                    stroke="#b35a4e"
+                    strokeWidth={1.2}
                   />
                 </AreaChart>
               </ResponsiveContainer>
@@ -645,10 +593,9 @@ export function RiskPage({ workspace, market, onChange }: AnalysisPageProps) {
             <div className="card analysis-form-card">
               <div className="card-header">
                 <div>
-                  <h3>Wie bewegen sich deine Anlagen?</h3>
+                  <h3>Korrelation</h3>
                   <p className="muted">Korrelation der täglichen Renditen.</p>
                 </div>
-                <CircleHelp size={17} />
               </div>
               <div className="table-wrap">
                 <table className="correlation-table">
@@ -671,14 +618,9 @@ export function RiskPage({ workspace, market, onChange }: AnalysisPageProps) {
                               style={{
                                 background:
                                   matrix[i][j] === null
-                                    ? '#f3f5f4'
-                                    : matrix[i][j]! >= 0
-                                      ? `rgba(11,140,116,${0.06 + matrix[i][j]! * 0.65})`
-                                      : `rgba(220,157,121,${0.1 + Math.abs(matrix[i][j]!) * 0.5})`,
-                                color:
-                                  matrix[i][j] !== null && matrix[i][j]! > 0.65
-                                    ? 'white'
-                                    : '#42544c',
+                                    ? '#f3f3f1'
+                                    : `rgba(36,36,36,${0.03 + ((matrix[i][j]! + 1) / 2) * 0.15})`,
+                                color: '#242424',
                               }}
                             >
                               {matrix[i][j] === null ? '—' : matrix[i][j]!.toFixed(2)}
@@ -698,10 +640,9 @@ export function RiskPage({ workspace, market, onChange }: AnalysisPageProps) {
             <div className="card analysis-form-card">
               <div className="card-header">
                 <div>
-                  <h3>Die Zahlen einordnen</h3>
-                  <p className="muted">Risiko hat mehr als eine Dimension.</p>
+                  <h3>Weitere Kennzahlen</h3>
+                  <p className="muted">Historische Renditen und Verlustmaße</p>
                 </div>
-                <Info size={17} />
               </div>
               <div className="analysis-detail-row">
                 <div>
@@ -786,7 +727,7 @@ const presets: {
   {
     id: 'custom',
     name: 'Eigenes Szenario',
-    subtitle: 'Deine Annahmen, dein Test',
+    subtitle: 'Frei wählbare Kursschocks',
     shocks: { equity: -0.2, bond: -0.05, gold: 0.05, crypto: -0.35, realestate: -0.15 },
   },
 ];
@@ -811,27 +752,20 @@ export function StressPage({ workspace, market }: AnalysisPageProps) {
   return (
     <>
       <Heading
-        eyebrow="VORBEREITET AUF DAS UNERWARTETE"
-        title="Was hält dein Portfolio aus?"
-        text="Teste, wie sich heftige Marktbewegungen auf dein Vermögen auswirken."
-        action={
-          <span className="badge neutral">
-            <FlaskConical size={14} /> Hypothetische Schocks
-          </span>
-        }
+        title="Stresstest"
+        text="Auswirkungen hypothetischer Kursschocks auf dein Portfolio."
       />
       <div className="analysis-scenarios">
-        {presets.map((p, i) => (
+        {presets.map((p) => (
           <button
             type="button"
             key={p.id}
-            className={`card analysis-scenario${selected === p.id ? ' selected' : ''}`}
+            className={`analysis-scenario${selected === p.id ? ' selected' : ''}`}
+            aria-pressed={selected === p.id}
             onClick={() => select(p.id)}
           >
-            <span className="analysis-scenario-index">0{i + 1}</span>
             <strong>{p.name}</strong>
             <small>{p.subtitle}</small>
-            <span className="analysis-radio" />
           </button>
         ))}
       </div>
@@ -839,16 +773,14 @@ export function StressPage({ workspace, market }: AnalysisPageProps) {
         <div className="card analysis-form-card">
           <div className="card-header">
             <div>
-              <h3>Ein Schock. Mehrere Anlageklassen.</h3>
+              <h3>Schocks nach Anlageklasse</h3>
               <p className="muted">Annahmen frei anpassen.</p>
             </div>
-            <FlaskConical size={19} />
           </div>
           <div className="analysis-shocks">
             {assetClasses.map((c) => (
               <label key={c.key} className="range-field analysis-shock">
                 <span>
-                  <i style={{ background: c.color }} />
                   {c.label}
                   <strong className={shocks[c.key] < 0 ? 'text-negative' : 'text-positive'}>
                     {shocks[c.key] > 0 ? '+' : ''}
@@ -876,7 +808,8 @@ export function StressPage({ workspace, market }: AnalysisPageProps) {
             type="button"
             onClick={() => select(presets[0].id)}
           >
-            <RefreshCw size={14} /> Annahmen zurücksetzen
+            {' '}
+            Annahmen zurücksetzen
           </button>
         </div>
         <div className="analysis-stack">
@@ -884,7 +817,7 @@ export function StressPage({ workspace, market }: AnalysisPageProps) {
             <>
               <div className="card analysis-stress-summary">
                 <div>
-                  <span className="eyebrow">AUSWIRKUNG AUF DEIN PORTFOLIO</span>
+                  <h3>Simulierte Wertänderung</h3>
                   <div
                     className={
                       result.loss > 0
@@ -905,7 +838,6 @@ export function StressPage({ workspace, market }: AnalysisPageProps) {
                   <span>
                     Aktueller Wert<strong>{money(result.currentValue)}</strong>
                   </span>
-                  <ArrowRight size={21} />
                   <span>
                     Wert nach dem Schock<strong>{money(result.stressedValue)}</strong>
                   </span>
@@ -914,7 +846,7 @@ export function StressPage({ workspace, market }: AnalysisPageProps) {
               <div className="card analysis-chart-card">
                 <div className="card-header">
                   <div>
-                    <h3>Wo entsteht der größte Effekt?</h3>
+                    <h3>Wertänderung nach Position</h3>
                     <p className="muted">Wertänderung je Position in Euro.</p>
                   </div>
                 </div>
@@ -935,7 +867,7 @@ export function StressPage({ workspace, market }: AnalysisPageProps) {
                         tickFormatter={compact}
                         axisLine={false}
                         tickLine={false}
-                        tick={{ fontSize: 11, fill: '#89918e' }}
+                        tick={{ fontSize: 11, fill: '#73736e' }}
                       />
                       <YAxis
                         dataKey="symbol"
@@ -943,16 +875,16 @@ export function StressPage({ workspace, market }: AnalysisPageProps) {
                         width={70}
                         axisLine={false}
                         tickLine={false}
-                        tick={{ fontSize: 11, fill: '#5b6760' }}
+                        tick={{ fontSize: 11, fill: '#73736e' }}
                       />
                       <Tooltip
                         contentStyle={tooltipStyle}
                         formatter={(value) => [money(Number(value)), 'Wertänderung']}
                       />
-                      <ReferenceLine x={0} stroke="#aebbb3" />
-                      <Bar dataKey="impact" radius={[4, 4, 4, 4]} maxBarSize={24}>
+                      <ReferenceLine x={0} stroke="#bdbdb6" />
+                      <Bar isAnimationActive={false} dataKey="impact" radius={0} maxBarSize={16}>
                         {result.positions.map((p) => (
-                          <Cell key={p.symbol} fill={p.impact < 0 ? '#c97e70' : '#0b8c74'} />
+                          <Cell key={p.symbol} fill={p.impact < 0 ? '#b35a4e' : '#28705c'} />
                         ))}
                       </Bar>
                     </BarChart>
@@ -969,7 +901,7 @@ export function StressPage({ workspace, market }: AnalysisPageProps) {
         <div className="card">
           <div className="card-header">
             <div>
-              <h3>Der Schock im Detail</h3>
+              <h3>Positionen im Szenario</h3>
               <p className="muted">Ohne Verkäufe, Rebalancing oder Transaktionskosten.</p>
             </div>
           </div>
@@ -1088,14 +1020,8 @@ export function BacktestPage({ workspace, market }: AnalysisPageProps) {
   return (
     <>
       <Heading
-        eyebrow="STRATEGIE TRIFFT WIRKLICHKEIT"
-        title="Ein Blick zurück. Mit deinem Plan."
-        text="Teste deine Zielgewichtung an tatsächlichen historischen Kursen."
-        action={
-          <span className="badge neutral">
-            <TrendingUp size={14} /> Historisches Backtesting
-          </span>
-        }
+        title="Backtest"
+        text="Zielgewichtung mit historischen Kursen und regelmäßigen Einzahlungen prüfen."
       />
       <form className="card analysis-backtest-form" onSubmit={run}>
         <div className="analysis-backtest-fields">
@@ -1144,7 +1070,8 @@ export function BacktestPage({ workspace, market }: AnalysisPageProps) {
             suffix="%"
           />
           <button className="btn btn-primary" type="submit">
-            <RefreshCw size={15} /> Strategie testen
+            {' '}
+            Strategie testen
           </button>
         </div>
         {error && (
@@ -1165,7 +1092,6 @@ export function BacktestPage({ workspace, market }: AnalysisPageProps) {
               label="Portfolio am Ende"
               value={money(result.finalValue)}
               note={`${money(result.contributed)} insgesamt eingezahlt`}
-              positive
             />
             <Metric
               label="Zeitgewichtete Rendite"
@@ -1186,14 +1112,14 @@ export function BacktestPage({ workspace, market }: AnalysisPageProps) {
           <div className="card analysis-chart-card">
             <div className="card-header">
               <div>
-                <h3>So hätte sich die Strategie entwickelt.</h3>
+                <h3>Wertentwicklung</h3>
                 <p className="muted">
                   {date(result.points[0].date)} –{' '}
                   {date(result.points[result.points.length - 1].date)} · auf gemeinsamen
                   Handelstagen
                 </p>
               </div>
-              <span className="badge neutral">
+              <span className="analysis-meta">
                 {result.points.length.toLocaleString('de-DE')} Kurstage
               </span>
             </div>
@@ -1204,12 +1130,6 @@ export function BacktestPage({ workspace, market }: AnalysisPageProps) {
             >
               <ResponsiveContainer width="100%" height="100%">
                 <ComposedChart data={chartData} margin={{ top: 15, right: 16, left: 0, bottom: 0 }}>
-                  <defs>
-                    <linearGradient id="backtestGradient" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="#0b8c74" stopOpacity={0.13} />
-                      <stop offset="100%" stopColor="#0b8c74" stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
                   <CartesianGrid vertical={false} stroke={gridStroke} />
                   <XAxis
                     dataKey="date"
@@ -1219,13 +1139,13 @@ export function BacktestPage({ workspace, market }: AnalysisPageProps) {
                     minTickGap={70}
                     axisLine={false}
                     tickLine={false}
-                    tick={{ fontSize: 11, fill: '#89918e' }}
+                    tick={{ fontSize: 11, fill: '#73736e' }}
                   />
                   <YAxis
                     tickFormatter={compact}
                     axisLine={false}
                     tickLine={false}
-                    tick={{ fontSize: 11, fill: '#89918e' }}
+                    tick={{ fontSize: 11, fill: '#73736e' }}
                     width={65}
                   />
                   <Tooltip
@@ -1234,34 +1154,37 @@ export function BacktestPage({ workspace, market }: AnalysisPageProps) {
                     formatter={(value, name) => [money(Number(value)), name]}
                   />
                   <Area
+                    isAnimationActive={false}
                     dataKey="value"
                     type="monotone"
-                    fill="url(#backtestGradient)"
-                    stroke="#0b8c74"
-                    strokeWidth={2.5}
-                    name="Deine Strategie"
+                    fill="#eeeee9"
+                    stroke="#242424"
+                    strokeWidth={1.8}
+                    name="Portfolio"
                   />
                   {hasBenchmark && (
                     <Line
+                      isAnimationActive={false}
                       dataKey="benchmark"
                       type="monotone"
-                      stroke="#7b8dbb"
+                      stroke="#777770"
                       strokeWidth={1.5}
                       dot={false}
                       name="S&P 500 · SPY"
                     />
                   )}
                   <Line
+                    isAnimationActive={false}
                     dataKey="contributions"
                     type="stepAfter"
-                    stroke="#adb4b0"
+                    stroke="#b3b3ab"
                     strokeDasharray="4 4"
                     dot={false}
                     name="Einzahlungen"
                   />
                   <Legend
-                    iconType="circle"
-                    iconSize={7}
+                    iconType="plainline"
+                    iconSize={16}
                     wrapperStyle={{ fontSize: 11, paddingTop: 18 }}
                   />
                 </ComposedChart>
@@ -1280,18 +1203,16 @@ export function BacktestPage({ workspace, market }: AnalysisPageProps) {
                     .filter((item) => item.targetWeight > 0)
                     .reduce((s, item) => s + item.targetWeight, 0);
                   const weight = sum > 0 ? h.targetWeight / sum : 0;
-                  const instrument = INSTRUMENTS.find((i) => i.symbol === h.symbol);
                   return (
                     <div className="analysis-allocation-row" key={h.id}>
                       <span>
-                        <i style={{ background: instrument?.color || '#0b8c74' }} />
                         <strong>{h.symbol}</strong>
                       </span>
                       <div>
                         <span
                           style={{
                             width: `${weight * 100}%`,
-                            background: instrument?.color || '#0b8c74',
+                            background: '#73736e',
                           }}
                         />
                       </div>
@@ -1306,18 +1227,15 @@ export function BacktestPage({ workspace, market }: AnalysisPageProps) {
             </div>
             <div className="card analysis-form-card">
               <div className="card-header">
-                <h3>Was dieser Test aussagt</h3>
-                <CircleHelp size={17} />
+                <h3>Hinweise zum Backtest</h3>
               </div>
               <div className="analysis-insight">
-                <ArrowDownRight size={19} />
                 <p>
                   Einzahlungen erhöhen das Vermögen, aber nicht die ausgewiesene zeitgewichtete
                   Rendite.
                 </p>
               </div>
               <div className="analysis-insight">
-                <TrendingUp size={19} />
                 <p>
                   {hasBenchmark
                     ? 'SPY steht als ETF-Proxy für den S&P 500. Gleiche Einzahlungen, ohne die modellierten Portfoliokosten.'
@@ -1325,7 +1243,6 @@ export function BacktestPage({ workspace, market }: AnalysisPageProps) {
                 </p>
               </div>
               <div className="analysis-insight">
-                <ShieldCheck size={19} />
                 <p>
                   Die aktuelle Auswahl kennt die Gewinner der Vergangenheit. Das Ergebnis kann durch
                   Auswahl- und Überlebensverzerrungen beeinflusst sein.

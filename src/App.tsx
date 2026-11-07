@@ -2,11 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 import {
   Activity,
-  ArrowDownLeft,
-  ArrowDownToLine,
-  ArrowRight,
   ArrowUpRight,
-  Bell,
   BookOpen,
   ChartNoAxesCombined,
   Check,
@@ -18,9 +14,6 @@ import {
   ExternalLink,
   FileUp,
   Globe2,
-  LayoutDashboard,
-  ListFilter,
-  LoaderCircle,
   Menu,
   MoreHorizontal,
   Plus,
@@ -29,11 +22,8 @@ import {
   Settings2,
   ShieldCheck,
   SlidersHorizontal,
-  Sparkles,
   Star,
-  Target,
   Trash2,
-  TrendingUp,
   Wallet,
   X,
   Zap,
@@ -45,18 +35,14 @@ import {
   ComposedChart,
   Line,
   LineChart,
-  Pie,
-  PieChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
-  Cell,
 } from 'recharts';
 import type { Holding, Instrument, MarketResponse, Workspace } from './lib/types';
 import { currentPortfolio, portfolioHistory, riskMetrics } from './lib/analytics';
 import {
-  DEFAULT_WORKSPACE,
   STORAGE_KEY,
   downloadFile,
   loadWorkspace,
@@ -70,25 +56,20 @@ import { loadMarketData } from './lib/market-client';
 import { PlannerPage, RiskPage, StressPage, BacktestPage } from './components/AnalysisPages';
 
 type Page = 'overview' | 'portfolio' | 'planner' | 'risk' | 'stress' | 'backtest' | 'markets';
-const NAV: { id: Page; label: string; icon: typeof Wallet; group: string }[] = [
-  { id: 'overview', label: 'Übersicht', icon: LayoutDashboard, group: 'WORKSPACE' },
-  { id: 'portfolio', label: 'Mein Portfolio', icon: Wallet, group: 'WORKSPACE' },
-  { id: 'planner', label: 'Anlageplan', icon: Target, group: 'WORKSPACE' },
-  { id: 'risk', label: 'Risikoanalyse', icon: ShieldCheck, group: 'ANALYSE & SIMULATION' },
-  { id: 'stress', label: 'Stresstest', icon: Zap, group: 'ANALYSE & SIMULATION' },
-  {
-    id: 'backtest',
-    label: 'Backtesting',
-    icon: ChartNoAxesCombined,
-    group: 'ANALYSE & SIMULATION',
-  },
-  { id: 'markets', label: 'Märkte & Watchlist', icon: Globe2, group: 'ENTDECKEN' },
+const NAV: { id: Page; label: string }[] = [
+  { id: 'overview', label: 'Übersicht' },
+  { id: 'portfolio', label: 'Portfolio' },
+  { id: 'planner', label: 'Anlageplan' },
+  { id: 'risk', label: 'Risikoanalyse' },
+  { id: 'stress', label: 'Stresstest' },
+  { id: 'backtest', label: 'Backtest' },
+  { id: 'markets', label: 'Märkte' },
 ];
 const tooltipStyle = {
-  border: '1px solid #e7ebee',
-  borderRadius: 12,
+  border: '1px solid #deded9',
+  borderRadius: 3,
   fontSize: 12,
-  boxShadow: '0 6px 24px #142b2220',
+  background: '#fff',
 };
 function getPage(): Page {
   const hash = location.hash.slice(1);
@@ -102,19 +83,8 @@ function IconBadge({
   size?: 'normal' | 'small';
 }) {
   return (
-    <span
-      className={`asset-icon ${size === 'small' ? 'asset-icon-small' : ''}`}
-      style={{ background: `${instrument.color}15`, color: instrument.color }}
-    >
-      {instrument.symbol === 'BTC-USD' ? (
-        '₿'
-      ) : instrument.symbol === 'ETH-USD' ? (
-        'Ξ'
-      ) : instrument.symbol === 'GLD' ? (
-        <Sparkles size={17} />
-      ) : (
-        instrument.symbol.slice(0, 2)
-      )}
+    <span className={`asset-icon ${size === 'small' ? 'asset-icon-small' : ''}`}>
+      {instrument.symbol.replace('-USD', '')}
     </span>
   );
 }
@@ -123,8 +93,6 @@ function Delta({ value }: { value: number }) {
     <span
       className={`delta ${Number.isFinite(value) ? (value >= 0 ? 'positive' : 'negative') : 'neutral'}`}
     >
-      {Number.isFinite(value) &&
-        (value >= 0 ? <ArrowUpRight size={14} /> : <ArrowDownLeft size={14} />)}{' '}
       {pct(value, true)}
     </span>
   );
@@ -365,63 +333,29 @@ export default function App() {
           onClick={() => setSidebar(false)}
         />
       )}
-      <aside className={`sidebar ${sidebar ? 'sidebar-open' : ''}`}>
+      <aside id="main-navigation" className={`sidebar ${sidebar ? 'sidebar-open' : ''}`}>
         <button className="brand" onClick={() => navigate('overview')} aria-label="ROI Übersicht">
-          <span className="brand-mark">
-            <ChartNoAxesCombined size={25} strokeWidth={2.7} />
-          </span>
-          <span>
-            roi<span className="brand-dot">.</span>
-          </span>
-          <span className="brand-sub">INVESTMENT WORKSPACE</span>
+          ROI
         </button>
-        <button className="workspace-switch" onClick={() => setDialog('settings')}>
-          <span className="workspace-avatar">J</span>
-          <span>
-            <strong>Mein Workspace</strong>
-            <small>Persönliche Finanzen</small>
-          </span>
-          <ChevronDown size={14} />
-        </button>
+        <p className="sidebar-caption">Portfolio & Analyse</p>
         <nav aria-label="Hauptnavigation">
           {NAV.map((nav, i) => (
-            <div key={nav.id}>
-              {(i === 0 || NAV[i - 1].group !== nav.group) && (
-                <div className="nav-group">{nav.group}</div>
-              )}
+            <div key={nav.id} className={i === 3 || i === 6 ? 'nav-group-start' : undefined}>
               <button
                 className={`nav-link ${page === nav.id ? 'active' : ''}`}
                 onClick={() => navigate(nav.id)}
                 aria-current={page === nav.id ? 'page' : undefined}
               >
-                <nav.icon size={18} />
                 <span>{nav.label}</span>
-                {nav.id === 'stress' && <span className="nav-tag">LAB</span>}
-                {page === nav.id && <span className="nav-active-dot" />}
               </button>
             </div>
           ))}
         </nav>
         <div className="sidebar-bottom">
-          <div className="sidebar-promo">
-            <span className="promo-icon">
-              <Sparkles size={18} />
-            </span>
-            <h3>Aus Zielen wird Zukunft.</h3>
-            <p>Finde heraus, was dein Geld morgen bewegen kann.</p>
-            <button onClick={() => navigate('planner')}>
-              Anlageplan entdecken <ArrowUpRight size={16} />
-            </button>
-            <div className="promo-orbit" />
-          </div>
           <button className="nav-link" onClick={() => setDialog('help')}>
-            <CircleHelp size={18} />
             Hilfe & Methodik
-            <ArrowUpRight className="help-arrow" size={15} />
           </button>
-          <div className="storage-indicator">
-            <span className="tiny-dot" /> Lokal gespeichert <ShieldCheck size={13} />
-          </div>
+          <div className="storage-indicator">Daten lokal gespeichert</div>
         </div>
       </aside>
       <div className="main-shell">
@@ -431,34 +365,36 @@ export default function App() {
               className="icon-btn mobile-menu"
               onClick={() => setSidebar(!sidebar)}
               aria-label="Menü öffnen"
+              aria-expanded={sidebar}
+              aria-controls="main-navigation"
             >
               <Menu size={21} />
             </button>
-            <span className="breadcrumb-root">Workspace</span>
-            <ChevronRight size={14} />
             <strong>{active.label}</strong>
           </div>
           <div className="topbar-actions">
-            <button className="global-search" onClick={() => setDialog('search')}>
-              <Search size={16} />
-              <span>Wertpapier suchen</span>
-              <kbd>⌕</kbd>
-            </button>
-            <span className="topbar-divider" />
             <button
-              className="icon-btn notification-btn"
+              className="global-search"
+              aria-label="Wertpapier suchen"
+              onClick={() => setDialog('search')}
+            >
+              <Search size={16} />
+              <span>Suchen</span>
+            </button>
+            <button
+              className="topbar-link"
               onClick={() => setDialog('sources')}
               aria-label="Datenstatus anzeigen"
             >
-              <Bell size={18} />
-              {cached && <span />}
+              Datenstand
             </button>
             <button
-              className="profile-avatar"
+              className="topbar-link settings-link"
               onClick={() => setDialog('settings')}
-              aria-label="Workspace-Einstellungen"
+              aria-label="Einstellungen"
             >
-              J
+              <Settings2 size={16} />
+              <span>Einstellungen</span>
             </button>
           </div>
         </header>
@@ -467,15 +403,8 @@ export default function App() {
             <>
               <div className="page-heading">
                 <div>
-                  <div className="eyebrow">
-                    <span className="tiny-dot" /> DEIN INVESTMENT-WORKSPACE
-                  </div>
-                  <h1>
-                    Dein Vermögen im Überblick<span className="heading-dot">.</span>
-                  </h1>
-                  <p className="muted">
-                    Verstehe dein Portfolio. Erkenne Risiken. Plane deinen nächsten Schritt.
-                  </p>
+                  <h1>Übersicht</h1>
+                  <p className="muted">Bestand, Entwicklung und Risiko.</p>
                 </div>
                 <div className="heading-actions">
                   <button className="btn" onClick={exportJson}>
@@ -490,12 +419,10 @@ export default function App() {
               </div>
               <div className="overview-context">
                 <button className="portfolio-name" onClick={() => setDialog('settings')}>
-                  <Wallet size={15} />
                   {workspace.portfolioName}
                   <ChevronDown size={13} />
                 </button>
                 <button className="data-state" onClick={() => setDialog('sources')}>
-                  <span className={`tiny-dot ${cached ? 'amber' : ''}`} />
                   {PAGES_MODE
                     ? 'Veröffentlichte Marktdaten'
                     : cached
@@ -508,7 +435,6 @@ export default function App() {
                 <Metric
                   label="Portfoliowert"
                   value={euro(portfolio.value, 2)}
-                  icon={Wallet}
                   note={
                     <>
                       <Delta value={portfolio.gainPercent} />
@@ -519,46 +445,25 @@ export default function App() {
                 <Metric
                   label="Historische Wertentwicklung"
                   value={pct(history.length > 1 ? risk.totalReturn : NaN, true)}
-                  icon={TrendingUp}
-                  note={
-                    <>
-                      <span className="tiny-dot" />
-                      <span>Heutiger Bestand, historisch gerechnet</span>
-                    </>
-                  }
+                  note={<span>Heutiger Bestand rückgerechnet</span>}
                 />
                 <Metric
                   label="Portfolio-Volatilität"
                   value={pct(history.length >= 31 ? risk.volatility : NaN)}
-                  icon={Activity}
-                  note={
-                    <>
-                      <span className="badge neutral">
-                        {history.length >= 31
-                          ? risk.volatility < 0.1
-                            ? 'Niedrig'
-                            : risk.volatility < 0.2
-                              ? 'Moderat'
-                              : 'Erhöht'
-                          : 'Keine Daten'}
-                      </span>
-                      <span>annualisiert</span>
-                    </>
-                  }
+                  note={<span>Annualisierte Tagesschwankung</span>}
                 />
                 <Metric
                   label="Monatlicher Sparplan"
                   value={euro(workspace.plan.monthlyContribution)}
-                  icon={Target}
                   note={
                     <button className="inline-link" onClick={() => navigate('planner')}>
-                      Deinen Anlageplan ansehen <ArrowRight size={13} />
+                      Anlageplan bearbeiten
                     </button>
                   }
                 />
               </div>
               <div className="overview-charts">
-                <PortfolioChart history={history} portfolioValue={portfolio.value} />
+                <PortfolioChart history={history} />
                 <AllocationCard
                   positions={portfolio.positions}
                   value={portfolio.value}
@@ -568,13 +473,11 @@ export default function App() {
               <div className="section-heading">
                 <div>
                   <h2>
-                    Deine Positionen{' '}
-                    <span className="count-badge">{workspace.holdings.length}</span>
+                    Positionen <span className="count-badge">{workspace.holdings.length}</span>
                   </h2>
-                  <p className="muted">Alles, was dein Portfolio bewegt.</p>
                 </div>
                 <button className="text-link" onClick={() => navigate('portfolio')}>
-                  Portfolio verwalten <ArrowRight size={15} />
+                  Verwalten
                 </button>
               </div>
               <div className="card holdings-card">
@@ -585,50 +488,14 @@ export default function App() {
                   onDetails={setSelectedAsset}
                 />
               </div>
-              <div className="section-heading market-section-heading">
-                <div>
-                  <h2>Die Märkte im Blick</h2>
-                  <p className="muted">Ein kleiner Ausschnitt. Das große Ganze.</p>
-                </div>
-                <button className="text-link" onClick={() => navigate('markets')}>
-                  Alle Märkte <ArrowRight size={15} />
-                </button>
-              </div>
-              <div className="market-strip">
-                {['SPY', 'QQQ', 'GLD', 'BTC-USD'].map((symbol) => (
-                  <MarketTile
-                    key={symbol}
-                    symbol={symbol}
-                    market={market}
-                    onClick={() => setSelectedAsset(symbol)}
-                  />
-                ))}
-              </div>
-              <div className="insight-banner">
-                <div className="insight-icon">
-                  <ShieldCheck size={23} />
-                </div>
-                <div>
-                  <strong>Wie krisenfest ist dein Portfolio?</strong>
-                  <p>Spiele Marktschocks durch und entdecke, wo dein Portfolio verwundbar ist.</p>
-                </div>
-                <button className="btn" onClick={() => navigate('stress')}>
-                  Stresstest starten <ArrowUpRight size={15} />
-                </button>
-              </div>
             </>
           )}
           {page === 'portfolio' && (
             <>
               <div className="page-heading">
                 <div>
-                  <div className="eyebrow">DEIN KAPITAL, DEINE STRATEGIE</div>
-                  <h1>
-                    Mein Portfolio<span className="heading-dot">.</span>
-                  </h1>
-                  <p className="muted">
-                    Positionen verwalten und deine Allokation bewusst gestalten.
-                  </p>
+                  <h1>Portfolio</h1>
+                  <p className="muted">Positionen, Einstandspreise und Zielgewichte.</p>
                 </div>
                 <div className="heading-actions">
                   <button className="btn" onClick={() => importRef.current?.click()}>
@@ -645,19 +512,16 @@ export default function App() {
                 <Metric
                   label="Portfoliowert"
                   value={euro(portfolio.value, 2)}
-                  icon={Wallet}
                   note={<span>{workspace.holdings.length} Positionen · Basiswährung EUR</span>}
                 />
                 <Metric
                   label="Investiertes Kapital"
                   value={euro(portfolio.cost, 2)}
-                  icon={ArrowDownToLine}
                   note={<span>Einstand mit aktuellem Wechselkurs</span>}
                 />
                 <Metric
                   label="Buchgewinn / -verlust"
                   value={euro(portfolio.gain, 2)}
-                  icon={TrendingUp}
                   note={<Delta value={portfolio.gainPercent} />}
                 />
               </div>
@@ -728,9 +592,7 @@ export default function App() {
             />
           )}
           <footer className="page-footer">
-            <span>
-              <span className="footer-logo">roi.</span> Mehr Klarheit. Bessere Entscheidungen.
-            </span>
+            <span>ROI · Portfolioanalyse</span>
             <div>
               <button onClick={() => setDialog('sources')}>Daten & Quellen</button>
               <span>·</span>
@@ -972,35 +834,18 @@ export default function App() {
     </div>
   );
 }
-function Metric({
-  label,
-  value,
-  icon: Icon,
-  note,
-}: {
-  label: string;
-  value: string;
-  icon: typeof Wallet;
-  note: ReactNode;
-}) {
+function Metric({ label, value, note }: { label: string; value: string; note: ReactNode }) {
   return (
     <div className="card metric">
       <div className="metric-top">
         <span className="metric-label">{label}</span>
-        <Icon size={17} />
       </div>
       <div className="metric-value">{value}</div>
       <div className="metric-note">{note}</div>
     </div>
   );
 }
-function PortfolioChart({
-  history,
-  portfolioValue,
-}: {
-  history: ReturnType<typeof portfolioHistory>;
-  portfolioValue: number;
-}) {
+function PortfolioChart({ history }: { history: ReturnType<typeof portfolioHistory> }) {
   const [period, setPeriod] = useState('5J');
   const [benchmark, setBenchmark] = useState(true);
   const data = useMemo(() => {
@@ -1017,46 +862,38 @@ function PortfolioChart({
       <div className="card-header">
         <div>
           <h2>
-            Portfolioentwicklung{' '}
+            Historische Entwicklung{' '}
             <span
-              className="info-dot"
-              title="Modell des heutigen Bestands zu historischen Kursen, keine echte Depotentwicklung"
+              className={`chart-gain ${!Number.isFinite(gain) ? 'neutral' : gain >= 0 ? 'positive' : 'negative'}`}
             >
-              i
+              {pct(gain, true)}
             </span>
           </h2>
-          <p className="muted">Dein Kapital im Zeitverlauf</p>
+          <p className="muted">Heutiger Bestand rückgerechnet · Wechselkurs konstant</p>
         </div>
         <div className="period-tabs" aria-label="Zeitraum">
           {['1M', '6M', '1J', '3J', '5J'].map((p) => (
-            <button className={period === p ? 'selected' : ''} key={p} onClick={() => setPeriod(p)}>
+            <button
+              className={period === p ? 'selected' : ''}
+              aria-pressed={period === p}
+              key={p}
+              onClick={() => setPeriod(p)}
+            >
               {p}
             </button>
           ))}
         </div>
       </div>
-      <div className="chart-summary">
-        <strong>{euro(portfolioValue, 2)}</strong>
-        <span className={`chart-gain ${gain >= 0 ? 'positive' : 'negative'}`}>
-          {pct(gain, true)} <span>im Zeitraum</span>
-        </span>
-      </div>
       {data.length > 1 ? (
         <div className="performance-chart">
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart data={data} margin={{ top: 15, right: 10, bottom: 0, left: 0 }}>
-              <defs>
-                <linearGradient id="portfolioGradient" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#0c8f7b" stopOpacity={0.18} />
-                  <stop offset="100%" stopColor="#0c8f7b" stopOpacity={0.005} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid vertical={false} stroke="#eef1f3" strokeDasharray="3 4" />
+              <CartesianGrid vertical={false} stroke="#e9e9e5" />
               <XAxis
                 dataKey="date"
                 tickFormatter={shortDate}
                 minTickGap={70}
-                tick={{ fontSize: 11, fill: '#8a949f' }}
+                tick={{ fontSize: 11, fill: '#6f6f66' }}
                 axisLine={false}
                 tickLine={false}
                 dy={10}
@@ -1064,7 +901,7 @@ function PortfolioChart({
               <YAxis
                 tickFormatter={(v) => `${Math.round(v / 1000)} Tsd.`}
                 width={63}
-                tick={{ fontSize: 10, fill: '#8a949f' }}
+                tick={{ fontSize: 11, fill: '#6f6f66' }}
                 axisLine={false}
                 tickLine={false}
                 domain={['auto', 'auto']}
@@ -1079,20 +916,20 @@ function PortfolioChart({
                   type="monotone"
                   dataKey="benchmark"
                   name="S&P 500 · normiert"
-                  stroke="#acb7ca"
+                  stroke="#b5b5ae"
                   strokeWidth={1.5}
                   strokeDasharray="5 5"
                   dot={false}
                   isAnimationActive={false}
                 />
               )}
-              <Area
+              <Line
                 type="monotone"
                 dataKey="value"
-                name="Dein Portfolio"
-                stroke="#0b8c78"
-                strokeWidth={2.5}
-                fill="url(#portfolioGradient)"
+                name="Portfolio"
+                stroke="#33332e"
+                strokeWidth={2}
+                dot={false}
                 isAnimationActive={false}
               />
             </ComposedChart>
@@ -1100,21 +937,21 @@ function PortfolioChart({
         </div>
       ) : (
         <div className="empty-state">
-          <ChartNoAxesCombined />
-          <h3>Hier wächst dein Überblick.</h3>
+          <h3>Noch keine Kursentwicklung</h3>
           <p>Füge Positionen hinzu, um ihre Entwicklung zu sehen.</p>
         </div>
       )}
       <div className="chart-legend">
         <span>
-          <i style={{ background: '#0b8c78' }} />
-          Dein Portfolio
+          <i style={{ background: '#33332e' }} />
+          Portfolio
         </span>
         <button
           onClick={() => setBenchmark(!benchmark)}
+          aria-pressed={benchmark}
           className={!benchmark ? 'legend-disabled' : ''}
         >
-          <i style={{ background: '#acb7ca' }} />
+          <i style={{ background: '#b5b5ae' }} />
           S&P 500 <span className="legend-note">Vergleich</span>
         </button>
         <span className="legend-period">
@@ -1139,77 +976,37 @@ function AllocationCard({
       name,
       value: positions
         .filter((p) => INSTRUMENT_BY_SYMBOL[p.symbol].assetClass === key)
-        .reduce((s, p) => s + p.value, 0),
-      color: (
-        {
-          equity: '#0b8c78',
-          bond: '#8ebba8',
-          gold: '#d5ac55',
-          crypto: '#8e7dd0',
-          realestate: '#e38c67',
-        } as Record<string, string>
-      )[key],
+        .reduce((sum, p) => sum + p.value, 0),
     }))
-    .filter((x) => x.value > 0);
+    .filter((item) => item.value > 0);
   return (
     <section className="card allocation-card">
       <div className="card-header">
-        <div>
-          <h2>Deine Allokation</h2>
-          <p className="muted">Vielfalt mit Strategie</p>
-        </div>
-        <button className="icon-btn" onClick={onDetails} aria-label="Allokation bearbeiten">
-          <MoreHorizontal size={19} />
+        <h2>Aufteilung</h2>
+        <button className="text-link" onClick={onDetails}>
+          Bearbeiten
         </button>
       </div>
-      <div className="donut-wrapper">
-        <ResponsiveContainer width="100%" height={190}>
-          <PieChart>
-            <Pie
-              data={grouped}
-              dataKey="value"
-              innerRadius={65}
-              outerRadius={83}
-              paddingAngle={3}
-              cornerRadius={4}
-              stroke="none"
-              startAngle={90}
-              endAngle={-270}
-              isAnimationActive={false}
-            >
-              {grouped.map((x) => (
-                <Cell key={x.name} fill={x.color} />
-              ))}
-            </Pie>
-            <Tooltip formatter={(v, name) => [euro(Number(v)), name]} contentStyle={tooltipStyle} />
-          </PieChart>
-        </ResponsiveContainer>
-        <div className="donut-center">
-          <span>Anlageklassen</span>
-          <strong>
-            {grouped.length}
-            <small> / 5</small>
-          </strong>
-          <span>nach Marktwert</span>
-        </div>
-      </div>
-      <div className="allocation-legend">
-        {grouped.map((g) => (
-          <div key={g.name}>
-            <span>
-              <i style={{ background: g.color }} />
-              {g.name}
-            </span>
-            <strong>{pct(g.value / value)}</strong>
-            <div className="allocation-meter">
-              <span style={{ width: `${(g.value / value) * 100}%`, background: g.color }} />
+      {Number.isFinite(value) && value > 0 ? (
+        <div className="allocation-list">
+          {grouped.map((item) => (
+            <div className="allocation-row" key={item.name}>
+              <div>
+                <span>{item.name}</span>
+                <strong>{pct(item.value / value)}</strong>
+              </div>
+              <div className="allocation-meter">
+                <span style={{ width: `${(item.value / value) * 100}%` }} />
+              </div>
             </div>
-          </div>
-        ))}
-      </div>
-      <button className="allocation-action" onClick={onDetails}>
-        Allokation optimieren <ArrowRight size={14} />
-      </button>
+          ))}
+        </div>
+      ) : (
+        <div className="empty-state">
+          <p>Keine bewerteten Positionen.</p>
+        </div>
+      )}
+      <p className="allocation-footnote">Anteil am aktuellen Marktwert.</p>
     </section>
   );
 }
@@ -1252,7 +1049,6 @@ function HoldingsTable({
               <tr key={p.id}>
                 <td>
                   <button className="asset-cell" onClick={() => onDetails(p.symbol)}>
-                    <IconBadge instrument={instrument} />
                     <span>
                       <strong>{instrument.shortName}</strong>
                       <small>
@@ -1286,7 +1082,7 @@ function HoldingsTable({
                       <i
                         style={{
                           width: `${Math.min(100, p.weight * 100)}%`,
-                          background: instrument.color,
+                          background: '#777770',
                         }}
                       />
                     </div>
@@ -1309,7 +1105,7 @@ function HoldingsTable({
               <td colSpan={7}>
                 <div className="empty-state">
                   <Wallet />
-                  <h3>Dein Portfolio beginnt hier.</h3>
+                  <h3>Keine Positionen</h3>
                   <p>Füge deine erste Position hinzu oder importiere eine Sicherung.</p>
                 </div>
               </td>
@@ -1351,7 +1147,7 @@ function MarketTile({
             <LineChart data={prices.slice(-30)}>
               <Line
                 dataKey="close"
-                stroke={change >= 0 ? '#15937e' : '#ce6a60'}
+                stroke="#81817a"
                 strokeWidth={1.7}
                 dot={false}
                 isAnimationActive={false}
@@ -1542,10 +1338,8 @@ function RebalanceCard({
     <section className="card rebalance-card">
       <div className="card-header">
         <div>
-          <h2>Deine Zielallokation</h2>
-          <p className="muted">
-            Abweichungen erkennen. Dein Portfolio wieder ins Gleichgewicht bringen.
-          </p>
+          <h2>Zielallokation</h2>
+          <p className="muted">Aktuelle Gewichte im Vergleich zu deinen Zielwerten.</p>
         </div>
         <button
           className="btn btn-small"
@@ -1639,13 +1433,8 @@ function MarketsPage({
     <>
       <div className="page-heading">
         <div>
-          <div className="eyebrow">KONTEXT FÜR DEINE ENTSCHEIDUNGEN</div>
-          <h1>
-            Märkte & Watchlist<span className="heading-dot">.</span>
-          </h1>
-          <p className="muted">
-            14 ausgewählte Instrumente. Echte Kurse. Deine persönliche Watchlist.
-          </p>
+          <h1>Märkte</h1>
+          <p className="muted">Kurse, Zeitreihen und Watchlist für 14 Instrumente.</p>
         </div>
         <button className="btn" onClick={onRefresh} disabled={loading}>
           <RefreshCw size={16} className={loading ? 'spinning' : ''} />
@@ -1721,7 +1510,6 @@ function MarketsPage({
                     </td>
                     <td>
                       <button className="asset-cell" onClick={() => onDetails(i.symbol)}>
-                        <IconBadge instrument={i} />
                         <span>
                           <strong>{i.shortName}</strong>
                           <small>
@@ -1740,7 +1528,7 @@ function MarketsPage({
                           <LineChart data={prices.slice(-30)}>
                             <Line
                               dataKey="close"
-                              stroke={change >= 0 ? '#15937e' : '#ce6a60'}
+                              stroke="#81817a"
                               dot={false}
                               strokeWidth={1.5}
                               isAnimationActive={false}
@@ -1854,8 +1642,8 @@ function AssetModal({
             />
             <Area
               dataKey="close"
-              stroke={i.color}
-              fill={`${i.color}18`}
+              stroke="#33332e"
+              fill="#f1f1ee"
               strokeWidth={2}
               dot={false}
               isAnimationActive={false}
@@ -1905,14 +1693,13 @@ function SearchModal({
           autoFocus
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Name, Symbol oder Anlageklasse"
+          placeholder="Name oder Symbol"
           aria-label="Wertpapier suchen"
         />
       </div>
       <div className="search-results">
         {results.map((i) => (
           <button key={i.symbol} onClick={() => onSelect(i.symbol)}>
-            <IconBadge instrument={i} />
             <span>
               <strong>{i.shortName}</strong>
               <small>
@@ -1951,7 +1738,7 @@ function SettingsModal({
   const [name, setName] = useState(workspace.portfolioName);
   const [rate, setRate] = useState(String(workspace.riskFreeRate * 100));
   return (
-    <Modal title="Mein Workspace" onClose={onClose}>
+    <Modal title="Einstellungen" onClose={onClose}>
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -1986,7 +1773,7 @@ function SettingsModal({
           </small>
         </div>
         <div className="settings-backup">
-          <h3>Deine Daten mitnehmen</h3>
+          <h3>Datensicherung</h3>
           <p className="muted">
             Lokale Speicherung in diesem Browser. Sichere Positionen, Watchlist und Planungsannahmen
             als JSON.
