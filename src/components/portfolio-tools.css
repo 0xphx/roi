@@ -1,0 +1,216 @@
+.sidebar-portfolio {
+  margin: 7px 0 27px;
+}
+.sidebar-portfolio label {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 11px;
+  color: #74746e;
+}
+.sidebar-portfolio select {
+  width: 100%;
+  padding: 8px 5px;
+  min-height: 36px;
+  border: 1px solid #d9d9cf;
+  border-radius: 3px;
+  background: transparent;
+  font-size: 11px;
+  text-overflow: ellipsis;
+}
+.sidebar-portfolio > button {
+  margin-top: 10px;
+  font-size: 11px;
+}
+.sidebar .sidebar-caption {
+  margin-bottom: 25px;
+}
+.portfolio-manager-intro {
+  margin-bottom: 24px;
+}
+.portfolio-list {
+  border-top: 1px solid var(--border);
+}
+.portfolio-entry {
+  padding: 16px 0;
+  border-bottom: 1px solid var(--border);
+}
+.portfolio-entry-select {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 0;
+  border: 0;
+  background: none;
+  text-align: left;
+}
+.portfolio-entry-select strong {
+  display: block;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.portfolio-entry-select small {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+  color: #74746e;
+}
+.portfolio-entry-select > span:last-child {
+  flex-shrink: 0;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.portfolio-entry-active .portfolio-entry-select strong::before {
+  content: '— ';
+}
+.portfolio-entry-actions {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  margin-top: 12px;
+}
+.portfolio-entry-actions .text-link {
+  font-size: 11px;
+}
+.portfolio-rename {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 12px;
+}
+.portfolio-rename .field {
+  flex: 1;
+  min-width: 170px;
+  margin: 0;
+}
+.portfolio-rename .btn {
+  height: 40px;
+}
+.portfolio-rename .text-link {
+  min-height: 40px;
+}
+.portfolio-create {
+  margin-top: 28px;
+}
+.portfolio-create h3 {
+  margin-bottom: 18px;
+}
+.portfolio-create > .small {
+  margin-top: 13px;
+}
+.portfolio-backup {
+  border-top: 1px solid var(--border);
+  margin-top: 30px;
+  padding-top: 22px;
+}
+.portfolio-backup p {
+  margin: 8px 0 17px;
+}
+.portfolio-backup-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.portfolio-delete-confirm {
+  margin-top: 16px;
+  padding: 14px 0 0;
+  border-top: 1px solid var(--border);
+}
+.portfolio-delete-confirm p {
+  margin-bottom: 12px;
+  font-size: 12px;
+  color: #74746e;
+}
+.portfolio-delete-confirm > .text-link {
+  margin-left: 14px;
+}
+.library-import-summary {
+  margin: 20px 0;
+  padding: 15px 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+.library-import-summary p {
+  font-size: 12px;
+  margin: 7px 0;
+}
+.cash-rebalance {
+  margin-top: 34px;
+}
+.cash-rebalance-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 12px;
+  margin-bottom: 24px;
+}
+.cash-rebalance-form .field {
+  min-width: 220px;
+  max-width: 300px;
+  margin: 0;
+}
+.cash-rebalance-form .btn {
+  min-height: 40px;
+}
+.cash-rebalance-totals {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 24px;
+  padding: 18px 0 27px;
+}
+.cash-rebalance-totals > span {
+  font-size: 11px;
+  color: #74746e;
+}
+.cash-rebalance-totals strong {
+  display: block;
+  color: #292925;
+  font-size: 20px;
+  font-weight: 450;
+  font-variant-numeric: tabular-nums;
+  margin-top: 9px;
+}
+@media (max-width: 650px) {
+  .sidebar-portfolio select {
+    min-height: 42px;
+    font-size: 12px;
+  }
+  .portfolio-entry-select {
+    align-items: flex-start;
+  }
+  .portfolio-entry-select > span:last-child {
+    font-size: 12px;
+  }
+  .portfolio-entry-actions {
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  .portfolio-entry-actions > button {
+    min-height: 32px;
+  }
+  .portfolio-create .form-grid {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+  .cash-rebalance-totals {
+    grid-template-columns: 1fr;
+    gap: 18px;
+  }
+  .cash-rebalance-totals strong {
+    font-size: 23px;
+    margin-top: 5px;
+  }
+  .cash-rebalance-form .field {
+    width: 100%;
+    max-width: none;
+  }
+  .cash-rebalance-form .btn {
+    min-height: 44px;
+  }
+  .portfolio-backup-actions .btn {
+    min-height: 40px;
+  }
+}

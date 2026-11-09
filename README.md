@@ -50,14 +50,19 @@ npm run refresh:data
 
 ## Funktionen
 
+Der Ausbau und die nächsten Schritte stehen in der [Roadmap](ROADMAP.md). Version 1.1 ergänzt die lokale Portfolio-Sammlung, einen vergleichbaren Strategietest und Rebalancing mit neuen Einzahlungen.
+
 - **Übersicht:** Portfoliowert in EUR, Buchgewinne, Allokation, historische Modellperformance und Marktentwicklung.
+- **Portfolio-Sammlung:** Bis zu zwölf Portfolios getrennt verwalten, erstellen, duplizieren, umbenennen und wechseln. Jedes hat eigene Positionen, Zielgewichte, Watchlist, Plan und Sharpe-Zinsannahme.
 - **Portfolio:** Positionen mit Stückzahl, Einstand und Zielgewicht hinzufügen, bearbeiten und entfernen; Abweichungen zur Zielallokation und rechnerische Rebalancing-Beträge ansehen.
+- **Rebalancing mit Einzahlungen:** Zusätzliches Kapital proportional zu den fehlenden Zielbeträgen verteilen, ohne Positionen zu verkaufen; rechnerische Zukäufe und Stückzahlen als CSV exportieren.
 - **Anlageplanung:** Startkapital, Sparrate, Horizont, Ziel, Rendite, Volatilität, Inflation und laufende Kosten variieren; nominale und kaufkraftbereinigte Simulationen vergleichen.
 - **Risikoanalyse:** Annualisierte Rendite und Volatilität, Sharpe Ratio, maximaler Drawdown, täglicher Value at Risk und Expected Shortfall auf 95-%-Niveau.
 - **Stresstests:** Vorgegebene und eigene hypothetische Schocks für Aktien, Anleihen, Gold, Immobilien und Kryptowährungen, einschließlich Auswirkungen je Position.
 - **Backtesting:** Tatsächliche gemeinsame Kurstage, Sparraten, laufende Gebühren und monatliches, jährliches oder kein Rebalancing; SPY als Vergleich.
+- **Strategievergleich:** Bis zu vier gespeicherte Portfolios mit denselben Einzahlungen, Zusatzkosten, Rebalancing und gemeinsamen tatsächlichen Kurstagen vergleichen. Angezeigt werden Endvermögen, zeitgewichtete Rendite, CAGR, Drawdown und Kosten.
 - **Märkte und Watchlist:** Instrumente suchen, Kursverläufe ansehen und Favoriten speichern.
-- **Datensicherung:** Workspace als JSON sichern und wiederherstellen; Positionen als CSV importieren und exportieren.
+- **Datensicherung:** Einzelportfolios und Gesamtsicherungen als JSON sichern und wiederherstellen; Positionen und Rebalancing-Verteilungen als CSV exportieren, Positionen als CSV importieren.
 
 Das Startportfolio enthält **Beispielbestände und frei gewählte Einstandspreise**. Die Kurse stammen dagegen aus echten Datenabrufen. Ersetze die Beispielbestände durch eigene Positionen, bevor du die Ergebnisse für dein Portfolio verwendest.
 
@@ -113,11 +118,19 @@ Die API akzeptiert nur bekannte Symbole, höchstens 16 pro Anfrage und maximal 2
 
 Vergangene Renditen und Simulationen sind keine Prognose und begrenzen mögliche Verluste nicht. ROI unterstützt die eigene Analyse und gibt keine persönlichen Anlageempfehlungen.
 
+**Strategievergleich.** Die positive Zielgewichtung jeder ausgewählten Strategie wird normiert und mit identischen Annahmen durch denselben Backtest gerechnet. Der Datenbestand wird zuvor auf die Schnittmenge der Kurstage aller benötigten Instrumente begrenzt; verfügbare SPY-Kurse werden in dieselbe Schnittmenge einbezogen. Fehlende Positionen oder zu wenige gemeinsame Kurstage werden als Fehler angezeigt. Die zeitgewichtete Rendite zählt zusätzliche Einzahlungen nicht als Gewinn. Der aktuelle EUR/USD-Kurs bleibt konstant; historische Währungseffekte fehlen weiterhin.
+
+**Rebalancing mit neuem Kapital.** Für jede Position wird das Zielvermögen nach Einzahlung abzüglich des aktuellen Marktwerts berechnet. Nur positive Fehlbeträge erhalten Kapital, proportional zu ihrem Fehlbetrag. Die gesamte Eingabe wird verteilt; negative Zukäufe oder Verkäufe entstehen nicht. Bruchstücke sind erlaubt, es werden keine Orders erstellt. Die Verteilung berücksichtigt weder Handelskosten noch Steuern und kann bei stark übergewichteten Positionen die Zielgewichte nicht vollständig herstellen.
+
 ## Speicherung und Sicherungen
 
-Positionen, Watchlist, Name und Planungsannahmen werden lokal im Browser unter `roi.workspace.v1` gespeichert. Es gibt keine Anmeldung, geräteübergreifende Synchronisierung, Bankanbindung oder Orderausführung. Die Marktdaten-API erhält Instrumentensymbole, keine Stückzahlen oder Einstandspreise. Andere Browser und das Löschen des lokalen Browserspeichers greifen nicht auf denselben Workspace zu.
+Die aktive Portfolio-Sammlung wird lokal unter `roi.portfolio-library.v1` gespeichert. Beim ersten Laden übernimmt Version 1.1 einen bestehenden `roi.workspace.v1`-Einzelbestand im Speicher; der alte Eintrag wird dabei nicht verändert. Erst bei einer bewussten Änderung wird die Sammlung als ein validierter JSON-Wert gespeichert. Ein fehlgeschlagener Schreibzugriff aktualisiert die geöffnete Sammlung nicht. Änderungen aus anderen Fenstern desselben Browsers werden synchronisiert.
 
-Eine **JSON-Sicherung** enthält den vollständigen Workspace einschließlich Watchlist und Planungsannahmen. Ein **CSV-Import** ersetzt die Positionen und behält die übrigen Einstellungen bei. Erstelle vor dem Ersetzen eine Sicherung. Das unterstützte CSV-Format ist:
+Bis zu zwölf Portfolios enthalten jeweils ein eigenständiges Workspace-Objekt im bisherigen Version-1-Format. Eine **Einzelportfolio-Sicherung** enthält nur das aktive Portfolio. Eine **Gesamtsicherung** ist mit `kind: "roi-portfolio-library"` gekennzeichnet und enthält alle Portfolios plus die aktive ID. Vor dem Ersetzen einer gesamten Sammlung zeigt die Anwendung eine Importprüfung mit Anzahl und aktivem Portfolio; eine aktuelle Sicherung kann vorher heruntergeladen werden. Alte Workspace-JSON-Dateien bleiben verwendbar und ersetzen ausschließlich das aktive Portfolio. Ein **CSV-Import** ersetzt dessen Positionen und behält die übrigen Einstellungen sowie andere Portfolios bei.
+
+Es gibt keine Anmeldung, geräteübergreifende Synchronisierung, Bankanbindung oder Orderausführung. Die öffentliche Pages-Kursdatei enthält ausschließlich Marktdaten. Stückzahlen, Einstandspreise und Planungsannahmen werden nicht veröffentlicht. Andere Browser, Geräte und das Löschen des lokalen Speichers greifen nicht auf dieselbe Sammlung zu. Erstelle vor dem Ersetzen oder Löschen eine Sicherung.
+
+Das unterstützte CSV-Format ist:
 
 ```csv
 symbol,quantity,averageCost,targetWeight
@@ -132,7 +145,10 @@ Dezimalzahlen verwenden einen Punkt. Unterstützte Trenner sind Komma und Semiko
 - `src/App.tsx`: Workspace, Portfolio, Märkte, Watchlist und Dialoge.
 - `src/components/AnalysisPages.tsx`: Anlageplanung, Risiko, Stress und Backtesting.
 - `src/lib/analytics.ts`: Reine, unabhängig testbare Rechenfunktionen.
-- `src/lib/workspace.ts`: Lokale Speicherung, Validierung und Import/Export.
+- `src/lib/workspace.ts`: Bestehendes Einzelportfolio-Format, Validierung und CSV-Import/Export.
+- `src/lib/portfolio-library.ts`: Portfolio-Sammlung, nicht schreibende Migration, atomare Speicherung und Verwaltung.
+- `src/components/ComparePage.tsx`: Strategievergleich mit gemeinsamen Annahmen und Datenzeiträumen.
+- `src/components/PortfolioManager.tsx` und `CashRebalance.tsx`: Portfolioverwaltung und rechnerische Zukäufe aus neuem Kapital.
 - `src/lib/market-client.ts`: Geprüfte Marktdatenantworten und getrennte Abrufwege für Pages und API.
 - `src/data/catalog.ts`: Unterstützte Instrumente und Anlageklassen.
 - `server/market.ts`: Anbieterzugriff, Parser, Cache, Zeitlimits und echte Fallbackdaten.

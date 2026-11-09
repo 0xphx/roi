@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   backtest,
+  cashRebalance,
+  compareStrategies,
   currentPortfolio,
   monteCarlo,
   portfolioHistory,
@@ -507,5 +509,473 @@ describe('cashflow-aware backtesting', () => {
         options,
       ).points,
     ).toEqual([]);
+  });
+});
+
+describe('fair strategy comparisons', () => {
+  const strategies = [
+    { id: 'stocks', name: 'Aktien', holdings: [holding('VTI')] },
+    { id: 'bonds', name: 'Anleihen', holdings: [holding('BND')] },
+  ];
+
+  it('uses the intersection across every strategy rather than a separate start or filled dates', () => {
+    const market = {
+      VTI: series('VTI', [
+        ['2026-01-01', 90],
+        ['2026-01-02', 100],
+        ['2026-01-03', 110],
+        ['2026-01-04', 120],
+        ['2026-01-05', 130],
+      ]),
+      BND: series('BND', [
+        ['2026-01-02', 50],
+        ['2026-01-03', 55],
+        ['2026-01-05', 60],
+      ]),
+    };
+    const result = compareStrategies(strategies, market, 1, options);
+    expect(result.startDate).toBe('2026-01-02');
+    expect(result.endDate).toBe('2026-01-05');
+    expect(result.observations).toBe(3);
+    expect(result.points.map((point) => point.date)).toEqual([
+      '2026-01-02',
+      '2026-01-03',
+      '2026-01-05',
+    ]);
+    for (const strategy of result.strategies) {
+      expect(strategy.result.points.map((point) => point.date)).toEqual(
+        result.points.map((point) => point.date),
+      );
+      expect(strategy.result.points[0].value).toBe(100);
+    }
+    expect(result.points.at(-1)!.values.stocks).toBeCloseTo(130);
+    expect(result.points.at(-1)!.values.bonds).toBeCloseTo(120);
+  });
+
+  it('also matches available benchmark trading dates instead of inventing weekend SPY prices', () => {
+    const dates: [string, number][] = [
+      ['2026-01-02', 100],
+      ['2026-01-03', 100],
+      ['2026-01-04', 100],
+      ['2026-01-05', 110],
+    ];
+    const result = compareStrategies(
+      [{ id: 'crypto', name: 'Krypto', holdings: [holding('BTC-USD')] }],
+      {
+        'BTC-USD': series('BTC-USD', dates),
+        SPY: series('SPY', [
+          ['2026-01-02', 200],
+          ['2026-01-05', 220],
+        ]),
+      },
+      1,
+      options,
+    );
+    expect(result.points.map((point) => point.date)).toEqual(['2026-01-02', '2026-01-05']);
+    expect(result.points[1].benchmark).toBeCloseTo(110);
+  });
+
+  it('keeps a missing or unavailable benchmark explicit without discarding valid portfolio dates', () => {
+    const market = {
+      VTI: series('VTI', [
+        ['2026-01-02', 100],
+        ['2026-01-03', 110],
+      ]),
+    };
+    const result = compareStrategies([strategies[0]], market, 1, options);
+    expect(result.points).toHaveLength(2);
+    expect(result.points.every((point) => Number.isNaN(point.benchmark))).toBe(true);
+    const unavailable = {
+      ...market,
+      SPY: {
+        ...series('SPY', [
+          ['2026-01-02', 100],
+          ['2026-01-05', 200],
+        ]),
+        status: 'unavailable' as const,
+      },
+    };
+    expect(compareStrategies([strategies[0]], unavailable, 1, options).points).toEqual(
+      result.points,
+    );
+  });
+
+  it('invests the same cashflows on the same dates and excludes them from returns', () => {
+    const result = compareStrategies(
+      strategies,
+      {
+        VTI: series('VTI', [
+          ['2026-01-20', 100],
+          ['2026-01-30', 100],
+          ['2026-02-02', 100],
+          ['2026-03-02', 100],
+        ]),
+        BND: series('BND', [
+          ['2026-01-30', 50],
+          ['2026-02-02', 50],
+          ['2026-03-02', 50],
+        ]),
+        SPY: series('SPY', [
+          ['2026-01-30', 100],
+          ['2026-02-02', 100],
+          ['2026-03-02', 100],
+        ]),
+      },
+      1,
+      { ...options, monthlyContribution: 50 },
+    );
+    expect(result.points.map((point) => point.contributions)).toEqual([100, 150, 200]);
+    for (const strategy of result.strategies) {
+      expect(strategy.result.finalValue).toBe(200);
+      expect(strategy.result.contributed).toBe(200);
+      expect(strategy.result.totalReturn).toBe(0);
+      expect(strategy.result.maxDrawdown).toBe(0);
+    }
+    expect(result.points.at(-1)!.benchmark).toBe(200);
+  });
+
+  it('applies the same elapsed-calendar fee convention to every strategy', () => {
+    const result = compareStrategies(
+      strategies,
+      {
+        VTI: series('VTI', [
+          ['2024-01-01', 100],
+          ['2025-01-01', 100],
+        ]),
+        BND: series('BND', [
+          ['2024-01-01', 50],
+          ['2025-01-01', 50],
+        ]),
+      },
+      1,
+      { ...options, fee: 0.01 },
+    );
+    for (const strategy of result.strategies) {
+      expect(strategy.result.finalValue).toBeCloseTo(99);
+      expect(strategy.result.fees).toBeCloseTo(1);
+      expect(strategy.result.annualReturn).toBeCloseTo(-0.01);
+    }
+  });
+
+  it('ignores zero-target instruments but never drops an active instrument with missing quotes', () => {
+    const market = {
+      VTI: series('VTI', [
+        ['2026-01-01', 100],
+        ['2026-01-02', 110],
+      ]),
+    };
+    const ignored = [
+      { ...strategies[0], holdings: [holding(), holding('BND', { targetWeight: 0 })] },
+    ];
+    expect(compareStrategies(ignored, market, 1, options).points).toHaveLength(2);
+    expect(() => compareStrategies(strategies, market, 1, options)).toThrow(/BND/);
+    expect(() => compareStrategies([strategies[0]], market, Number.NaN, options)).toThrow(
+      /EUR\/USD/,
+    );
+    expect(() =>
+      compareStrategies([strategies[0]], { VTI: { ...market.VTI, currency: 'GBP' } }, 1, options),
+    ).toThrow(/Kurswährung/);
+  });
+
+  it('requires at least two genuine common observations', () => {
+    expect(() =>
+      compareStrategies(
+        strategies,
+        {
+          VTI: series('VTI', [
+            ['2026-01-01', 100],
+            ['2026-01-02', 110],
+          ]),
+          BND: series('BND', [
+            ['2026-01-02', 100],
+            ['2026-01-03', 110],
+          ]),
+        },
+        1,
+        options,
+      ),
+    ).toThrow(/gemeinsame Kurstage/);
+  });
+
+  it('rejects ambiguous strategy IDs and invalid or absent target allocations', () => {
+    const market = {
+      VTI: series('VTI', [
+        ['2026-01-01', 100],
+        ['2026-01-02', 110],
+      ]),
+    };
+    expect(() => compareStrategies([], market, 1, options)).toThrow(/einer und vier/);
+    expect(() => compareStrategies(Array(5).fill(strategies[0]), market, 1, options)).toThrow(
+      /einer und vier/,
+    );
+    expect(() => compareStrategies([strategies[0], strategies[0]], market, 1, options)).toThrow(
+      /eindeutige/,
+    );
+    expect(() => compareStrategies([{ ...strategies[0], id: ' ' }], market, 1, options)).toThrow(
+      /Kennung/,
+    );
+    expect(() =>
+      compareStrategies(
+        [{ ...strategies[0], holdings: [holding('VTI', { targetWeight: 0 })] }],
+        market,
+        1,
+        options,
+      ),
+    ).toThrow(/positives Zielgewicht/);
+    expect(() =>
+      compareStrategies(
+        [{ ...strategies[0], holdings: [holding('VTI', { targetWeight: -1 })] }],
+        market,
+        1,
+        options,
+      ),
+    ).toThrow(/Zielgewichte/);
+  });
+
+  it('validates shared budgets while allowing a zero initial capital contribution strategy', () => {
+    const market = {
+      VTI: series('VTI', [
+        ['2026-01-30', 100],
+        ['2026-02-02', 100],
+      ]),
+    };
+    expect(() =>
+      compareStrategies([strategies[0]], market, 1, { ...options, initialCapital: Number.NaN }),
+    ).toThrow(/Startkapital/);
+    expect(() =>
+      compareStrategies([strategies[0]], market, 1, { ...options, monthlyContribution: -1 }),
+    ).toThrow(/Sparrate/);
+    expect(() => compareStrategies([strategies[0]], market, 1, { ...options, fee: 1 })).toThrow(
+      /Zusatzkosten/,
+    );
+    const result = compareStrategies([strategies[0]], market, 1, {
+      ...options,
+      initialCapital: 0,
+      monthlyContribution: 50,
+    });
+    expect(result.strategies[0].result.finalValue).toBe(50);
+    expect(result.strategies[0].result.totalReturn).toBe(0);
+  });
+
+  it('preserves inputs and handles strategy identifiers as own data keys', () => {
+    const market = {
+      VTI: series('VTI', [
+        ['2026-01-02', 110],
+        ['2026-01-01', 100],
+      ]),
+    };
+    const selected = [{ ...strategies[0], id: '__proto__' }];
+    const before = structuredClone({ selected, market, options });
+    const result = compareStrategies(selected, market, 1, options);
+    expect(result.points[0].values.__proto__).toBe(100);
+    expect({ selected, market, options }).toEqual(before);
+  });
+});
+
+describe('cash-only rebalancing', () => {
+  const market = {
+    VTI: series('VTI', [['2026-01-01', 100]]),
+    BND: series('BND', [['2026-01-01', 100]]),
+    GLD: series('GLD', [['2026-01-01', 200]]),
+  };
+
+  it('uses new capital for underweights without selling an overweight position', () => {
+    const result = cashRebalance(
+      [
+        holding('VTI', { quantity: 8, targetWeight: 60 }),
+        holding('BND', { quantity: 2, targetWeight: 40 }),
+      ],
+      market,
+      1,
+      100,
+    );
+    expect(result.currentValue).toBe(1000);
+    expect(result.afterValue).toBe(1100);
+    expect(result.invested).toBe(100);
+    expect(result.positions[0].allocation).toBe(0);
+    expect(result.positions[0].quantity).toBe(0);
+    expect(result.positions[1].allocation).toBe(100);
+    expect(result.positions[1].quantity).toBe(1);
+    expect(result.positions[0].afterWeight).toBeCloseTo(800 / 1100);
+    expect(result.positions[1].afterWeight).toBeCloseTo(300 / 1100);
+    expect(result.positions.every((position) => position.allocation >= 0)).toBe(true);
+  });
+
+  it('distributes all cash proportionally across multiple post-deposit deficits', () => {
+    const result = cashRebalance(
+      [
+        holding('VTI', { quantity: 8, targetWeight: 50 }),
+        holding('BND', { quantity: 1, targetWeight: 30 }),
+        holding('GLD', { quantity: 0.5, targetWeight: 20 }),
+      ],
+      market,
+      1,
+      200,
+    );
+    // EUR1,000 existing; post-deposit targets600/360/240, positive deficits0/260/140.
+    expect(result.positions.map((position) => position.allocation)).toEqual([0, 130, 70]);
+    expect(result.invested).toBe(200);
+    expect(result.positions[1].quantity).toBeCloseTo(1.3);
+    expect(result.positions[2].quantity).toBeCloseTo(0.35);
+    expect(result.positions.reduce((sum, position) => sum + position.afterWeight, 0)).toBeCloseTo(
+      1,
+    );
+  });
+
+  it('normalizes target weights and converts extra share quantities from EUR to USD prices', () => {
+    const result = cashRebalance(
+      [
+        holding('VTI', { quantity: 0, targetWeight: 2 }),
+        holding('BND', { quantity: 0, targetWeight: 1 }),
+      ],
+      market,
+      2,
+      150,
+    );
+    expect(result.positions[0].targetWeight).toBeCloseTo(2 / 3);
+    expect(result.positions[0].allocation).toBeCloseTo(100);
+    expect(result.positions[0].quantity).toBeCloseTo(2);
+    expect(result.positions[1].allocation).toBeCloseTo(50);
+    expect(result.positions[1].quantity).toBeCloseTo(1);
+    expect(result.positions[0].afterWeight).toBeCloseTo(2 / 3);
+    expect(result.currentValue).toBe(0);
+  });
+
+  it('does not rebalance through trades when no cash is added', () => {
+    const result = cashRebalance(
+      [
+        holding('VTI', { quantity: 8, targetWeight: 50 }),
+        holding('BND', { quantity: 2, targetWeight: 50 }),
+      ],
+      market,
+      1,
+      0,
+    );
+    expect(result.invested).toBe(0);
+    expect(result.afterValue).toBe(1000);
+    for (const position of result.positions) {
+      expect(position.allocation).toBe(0);
+      expect(position.quantity).toBe(0);
+      expect(position.afterWeight).toBe(position.currentWeight);
+    }
+  });
+
+  it('does not buy a zero-target holding and can reach the target when cash is sufficient', () => {
+    const result = cashRebalance(
+      [
+        holding('VTI', { quantity: 1, targetWeight: 0 }),
+        holding('BND', { quantity: 0, targetWeight: 100 }),
+      ],
+      market,
+      1,
+      100,
+    );
+    expect(result.positions[0].allocation).toBe(0);
+    expect(result.positions[1].allocation).toBe(100);
+    expect(result.positions[1].afterWeight).toBe(0.5);
+    const enough = cashRebalance(
+      [
+        holding('VTI', { quantity: 8, targetWeight: 50 }),
+        holding('BND', { quantity: 2, targetWeight: 50 }),
+      ],
+      market,
+      1,
+      1000,
+    );
+    expect(enough.positions.map((position) => position.allocation)).toEqual([200, 800]);
+    expect(enough.positions.map((position) => position.afterWeight)).toEqual([0.5, 0.5]);
+  });
+
+  it('conserves the budget with fractional target weights and shares', () => {
+    const result = cashRebalance(
+      [
+        holding('VTI', { quantity: 0.11, targetWeight: 33 }),
+        holding('BND', { quantity: 0.13, targetWeight: 33 }),
+        holding('GLD', { quantity: 0.17, targetWeight: 34 }),
+      ],
+      market,
+      1.087,
+      123.45,
+    );
+    expect(result.positions.reduce((sum, position) => sum + position.allocation, 0)).toBeCloseTo(
+      123.45,
+      10,
+    );
+    expect(result.invested).toBeCloseTo(123.45, 10);
+    expect(result.afterValue - result.currentValue).toBeCloseTo(123.45, 10);
+    for (const position of result.positions) expect(position.allocation).toBeGreaterThanOrEqual(0);
+  });
+
+  it('does not omit missing quotes, invalid currencies, or invalid current quantities', () => {
+    expect(() => cashRebalance([holding('VWO')], market, 1, 100)).toThrow(/VWO/);
+    expect(() =>
+      cashRebalance([holding('VTI')], { ...market, VTI: { ...market.VTI, symbol: 'BND' } }, 1, 100),
+    ).toThrow(/anderen Instrument/);
+    expect(() =>
+      cashRebalance(
+        [holding('VTI')],
+        { ...market, VTI: { ...market.VTI, status: 'unavailable' } },
+        1,
+        100,
+      ),
+    ).toThrow(/VTI/);
+    expect(() => cashRebalance([holding('VTI')], market, 0, 100)).toThrow(/EUR\/USD/);
+    expect(() =>
+      cashRebalance(
+        [holding('VTI')],
+        { ...market, VTI: { ...market.VTI, currency: 'GBP' } },
+        1,
+        100,
+      ),
+    ).toThrow(/Kurswährung/);
+    expect(() => cashRebalance([holding('VTI', { quantity: -1 })], market, 1, 100)).toThrow(
+      /Stückzahlen/,
+    );
+  });
+
+  it('rejects invalid cash budgets and absent or invalid targets explicitly', () => {
+    for (const cash of [-1, Number.NaN, Number.POSITIVE_INFINITY])
+      expect(() => cashRebalance([holding()], market, 1, cash)).toThrow(/Kapital/);
+    expect(() => cashRebalance([], market, 1, 100)).toThrow(/positives Zielgewicht/);
+    expect(() => cashRebalance([holding('VTI', { targetWeight: 0 })], market, 1, 100)).toThrow(
+      /positives Zielgewicht/,
+    );
+    expect(() =>
+      cashRebalance([holding('VTI', { targetWeight: Number.NaN })], market, 1, 100),
+    ).toThrow(/Zielgewichte/);
+  });
+
+  it('preserves a tiny positive cash budget even when target deficits are lost to rounding', () => {
+    const tinyMarket = Object.fromEntries(
+      ['VTI', 'BND', 'GLD'].map((symbol) => [symbol, series(symbol, [['2026-01-01', 1.1]])]),
+    );
+    const result = cashRebalance(
+      ['VTI', 'BND', 'GLD'].map((symbol) => holding(symbol, { quantity: 7, targetWeight: 1 })),
+      tinyMarket,
+      1,
+      1e-16,
+    );
+    expect(result.invested).toBe(1e-16);
+    expect(result.positions.reduce((sum, position) => sum + position.allocation, 0)).toBe(1e-16);
+    expect(
+      result.positions.every(
+        (position) => Number.isFinite(position.quantity) && position.quantity >= 0,
+      ),
+    ).toBe(true);
+  });
+
+  it('merges duplicate symbols and leaves all input objects unchanged', () => {
+    const holdings = [
+      holding('VTI', { quantity: 1, targetWeight: 25 }),
+      holding('VTI', { id: 'duplicate', quantity: 1, targetWeight: 25 }),
+      holding('BND', { quantity: 1, targetWeight: 50 }),
+    ];
+    const before = structuredClone({ holdings, market });
+    const result = cashRebalance(holdings, market, 1, 100);
+    expect(result.positions.map((position) => position.symbol)).toEqual(['VTI', 'BND']);
+    expect(result.positions[0].currentValue).toBe(200);
+    expect(result.positions[0].targetWeight).toBe(0.5);
+    expect(result.positions[1].allocation).toBe(100);
+    expect({ holdings, market }).toEqual(before);
   });
 });

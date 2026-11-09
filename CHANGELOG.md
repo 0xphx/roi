@@ -1,5 +1,14 @@
 # Änderungen
 
+## 1.1.0 — 2026-11-09
+
+- Lokale Sammlung mit bis zu zwölf Portfolios, getrennten Plänen und Watchlists.
+- Portfolios erstellen, duplizieren, umbenennen, wechseln und entfernen.
+- Nicht schreibende Migration vorhandener Einzelbestände und Gesamtsicherungen mit Importprüfung.
+- Vergleich von bis zu vier Zielstrategien über identische Kurstage und Annahmen.
+- Rebalancing aus zusätzlichem Kapital ohne Verkäufe, einschließlich CSV-Ausgabe.
+- Getestete Datenvalidierung, Budgeterhaltung und Vergleichbarkeit; veröffentlichte Roadmap für weitere Daten- und Journalfunktionen.
+
 ## 1.0.2 — 2026-11-07
 
 - Minimalistische Oberfläche mit neutralen Farben, klarer Typografie und flachen Abschnitten.

@@ -515,3 +515,293 @@ export function backtest(
     fees,
   };
 }
+
+export interface ComparisonStrategy {
+  id: string;
+  name: string;
+  holdings: Holding[];
+}
+
+export interface ComparisonResult {
+  strategies: { id: string; name: string; result: ReturnType<typeof backtest> }[];
+  points: {
+    date: string;
+    contributions: number;
+    benchmark: number;
+    values: Record<string, number>;
+  }[];
+  startDate: string;
+  endDate: string;
+  /** Gemeinsame Kursbeobachtungen einschließlich des Starttags. */
+  observations: number;
+}
+
+function validateTargetWeights(holdings: Holding[], label: string): Holding[] {
+  if (
+    !Array.isArray(holdings) ||
+    holdings.some(
+      (position) =>
+        !position ||
+        typeof position.symbol !== 'string' ||
+        !position.symbol.trim() ||
+        !finite(position.targetWeight) ||
+        position.targetWeight < 0,
+    )
+  ) {
+    throw new RangeError(
+      `${label}: Bitte gültige Wertpapiere und nicht negative Zielgewichte eingeben.`,
+    );
+  }
+  const active = holdings.filter((position) => position.targetWeight > 0);
+  if (!active.length || !positive(sum(active.map((position) => position.targetWeight)))) {
+    throw new RangeError(`${label}: Mindestens ein positives Zielgewicht im Portfolio festlegen.`);
+  }
+  return active;
+}
+
+function requireMarketSeries(
+  symbol: string,
+  series: Record<string, MarketSeries>,
+  eurUsd: number,
+  minimumPrices: number,
+): { market: MarketSeries; prices: PricePoint[]; euroFactor: number } {
+  const market = series[symbol];
+  const prices = validPrices(market);
+  if (market && market.symbol !== symbol) {
+    throw new RangeError(
+      `Die Kursdaten für ${symbol} gehören zu einem anderen Instrument. Bitte Marktdaten aktualisieren.`,
+    );
+  }
+  if (!market || prices.length < minimumPrices) {
+    throw new RangeError(
+      `Für ${symbol} fehlen gültige ${minimumPrices > 1 ? 'historische Kurse' : 'Kursdaten'}. Bitte Marktdaten aktualisieren.`,
+    );
+  }
+  const factor = euroFactor(market.currency, eurUsd);
+  if (!positive(factor)) {
+    throw new RangeError(
+      market.currency === 'USD'
+        ? `Für ${symbol} fehlt ein gültiger EUR/USD-Referenzkurs. Bitte Marktdaten aktualisieren.`
+        : `Die Kurswährung ${market.currency || 'unbekannt'} von ${symbol} wird nicht unterstützt. Erlaubt sind EUR und USD.`,
+    );
+  }
+  if (prices.some((point) => !positive(point.close * factor))) {
+    throw new RangeError(`Die umgerechneten Kurswerte für ${symbol} sind nicht auswertbar.`);
+  }
+  return { market, prices, euroFactor: factor };
+}
+
+/**
+ * Vergleich auf exakt denselben Kursdaten und mit identischen Zahlungsströmen.
+ * Sämtliche positiv gewichteten Instrumente begrenzen gemeinsam den Zeitraum.
+ * Ein verfügbarer SPY-Vergleich begrenzt ihn zusätzlich auf seine tatsächlichen
+ * Kurstage; ohne verwertbare SPY-Historie bleibt die Benchmark ausdrücklich NaN.
+ * Historische Wechselkurse, Steuern und Handelskosten sind wie im Backtest nicht enthalten.
+ */
+export function compareStrategies(
+  strategies: ComparisonStrategy[],
+  series: Record<string, MarketSeries>,
+  eurUsd: number,
+  options: BacktestOptions,
+): ComparisonResult {
+  if (!Array.isArray(strategies) || strategies.length < 1 || strategies.length > 4) {
+    throw new RangeError('Bitte zwischen einer und vier Strategien zum Vergleich auswählen.');
+  }
+  const ids = new Set<string>();
+  const requiredSymbols = new Set<string>();
+  for (const strategy of strategies) {
+    if (
+      !strategy ||
+      typeof strategy.id !== 'string' ||
+      !strategy.id.trim() ||
+      strategy.id.length > 120 ||
+      ids.has(strategy.id.trim())
+    ) {
+      throw new RangeError('Jede Strategie benötigt eine eindeutige, nicht leere Kennung.');
+    }
+    if (typeof strategy.name !== 'string' || !strategy.name.trim()) {
+      throw new RangeError('Jede Strategie benötigt einen Namen.');
+    }
+    ids.add(strategy.id.trim());
+    const active = validateTargetWeights(strategy.holdings, strategy.name);
+    for (const position of active) requiredSymbols.add(position.symbol);
+  }
+  if (
+    !options ||
+    ![options.initialCapital, options.monthlyContribution, options.fee].every(finite) ||
+    options.initialCapital < 0 ||
+    options.monthlyContribution < 0 ||
+    options.fee < 0 ||
+    options.fee >= 1 ||
+    !['monthly', 'yearly', 'none'].includes(options.rebalance)
+  ) {
+    throw new RangeError(
+      'Bitte gültiges Startkapital, Sparrate, Zusatzkosten und Rebalancing für alle Strategien festlegen.',
+    );
+  }
+
+  const relevantSeries: Record<string, MarketSeries> = {};
+  for (const symbol of requiredSymbols) {
+    const checked = requireMarketSeries(symbol, series, eurUsd, 2);
+    relevantSeries[symbol] = { ...checked.market, prices: checked.prices };
+  }
+  const benchmarkPrices = validPrices(series.SPY);
+  if (benchmarkPrices.length >= 2 && series.SPY.symbol === 'SPY') {
+    relevantSeries.SPY = { ...series.SPY, prices: benchmarkPrices };
+    requiredSymbols.add('SPY');
+  }
+  const dateSets = [...requiredSymbols].map(
+    (symbol) => new Set(relevantSeries[symbol].prices.map((point) => point.date)),
+  );
+  const dates = [...dateSets[0]].filter((date) => dateSets.every((set) => set.has(date))).sort();
+  if (dates.length < 2) {
+    throw new RangeError(
+      'Für die ausgewählten Strategien und die verfügbare Benchmark fehlen mindestens zwei gemeinsame Kurstage. Bitte Zeitraum oder Wertpapierauswahl anpassen.',
+    );
+  }
+  const commonDates = new Set(dates);
+  const alignedSeries = Object.fromEntries(
+    Object.entries(relevantSeries).map(([symbol, market]) => [
+      symbol,
+      { ...market, prices: market.prices.filter((point) => commonDates.has(point.date)) },
+    ]),
+  );
+  const results = strategies.map((strategy) => ({
+    id: strategy.id,
+    name: strategy.name,
+    result: backtest(strategy.holdings, alignedSeries, eurUsd, options),
+  }));
+  const points = dates.map((date, index) => ({
+    date,
+    contributions: results[0].result.points[index].contributions,
+    benchmark: results[0].result.points[index].benchmark,
+    // Object.fromEntries erhält auch IDs wie "__proto__" als reguläre eigene Schlüssel.
+    values: Object.fromEntries(
+      results.map((strategy) => [strategy.id, strategy.result.points[index].value]),
+    ),
+  }));
+  return {
+    strategies: results,
+    points,
+    startDate: dates[0],
+    endDate: dates.at(-1)!,
+    observations: dates.length,
+  };
+}
+
+export interface CashRebalanceResult {
+  currentValue: number;
+  afterValue: number;
+  invested: number;
+  positions: {
+    symbol: string;
+    currentValue: number;
+    /** Normalisiertes Zielgewicht als Anteil zwischen 0 und 1. */
+    targetWeight: number;
+    currentWeight: number;
+    /** Zukauf in EUR; es werden keine Verkäufe modelliert. */
+    allocation: number;
+    /** Zusätzliche Bruchstücke zum aktuellen, in EUR umgerechneten Kurs. */
+    quantity: number;
+    afterWeight: number;
+  }[];
+}
+
+/**
+ * Verteilt zusätzliches Kapital ausschließlich durch Zukäufe auf Zieldefizite.
+ * Die Defizite beziehen sich auf den Wert nach der Einzahlung und werden
+ * proportional bedient. Übergewichte können ohne Verkäufe bestehen bleiben.
+ * Berechnet Bruchstücke ohne Gebühren, Steuern, Mindestorder oder Ausführung.
+ */
+export function cashRebalance(
+  holdings: Holding[],
+  series: Record<string, MarketSeries>,
+  eurUsd: number,
+  additionalCash: number,
+): CashRebalanceResult {
+  if (!finite(additionalCash) || additionalCash < 0) {
+    throw new RangeError(
+      'Das zusätzliche Kapital muss eine gültige, nicht negative EUR-Summe sein.',
+    );
+  }
+  validateTargetWeights(holdings, 'Rebalancing');
+  if (holdings.some((position) => !finite(position.quantity) || position.quantity < 0)) {
+    throw new RangeError('Für das Rebalancing gültige, nicht negative Stückzahlen eingeben.');
+  }
+  // Doppelte Symbole werden zusammengeführt, ohne Stückzahlen oder Gewichte zu verlieren.
+  const combined = new Map<string, { quantity: number; targetWeight: number }>();
+  for (const position of holdings) {
+    const existing = combined.get(position.symbol);
+    combined.set(position.symbol, {
+      quantity: (existing?.quantity ?? 0) + position.quantity,
+      targetWeight: (existing?.targetWeight ?? 0) + position.targetWeight,
+    });
+  }
+  const weightSum = sum([...combined.values()].map((position) => position.targetWeight));
+  const valued = [...combined].map(([symbol, position]) => {
+    const checked = requireMarketSeries(symbol, series, eurUsd, 1);
+    const price = checked.prices.at(-1)!.close * checked.euroFactor;
+    const value = position.quantity * price;
+    if (!finite(value) || !finite(position.targetWeight)) {
+      throw new RangeError(`Die Positionswerte für ${symbol} sind nicht auswertbar.`);
+    }
+    return { symbol, price, currentValue: value, targetWeight: position.targetWeight / weightSum };
+  });
+  const currentValue = sum(valued.map((position) => position.currentValue));
+  const afterValue = currentValue + additionalCash;
+  if (!finite(currentValue) || !finite(afterValue)) {
+    throw new RangeError('Der Gesamtwert ist zu groß. Bitte Kapital und Stückzahlen prüfen.');
+  }
+  // Die getrennte Cash-Komponente bleibt auch bei sehr kleinen Einzahlungen erhalten.
+  let deficits = valued.map((position) =>
+    Math.max(
+      0,
+      currentValue * position.targetWeight -
+        position.currentValue +
+        additionalCash * position.targetWeight,
+    ),
+  );
+  let deficitSum = sum(deficits);
+  if (additionalCash > 0 && deficitSum === 0) {
+    // Nur bei Rundungsunterlauf: mathematisch muss die Summe positiver Defizite
+    // mindestens die Einzahlung ergeben. Verteile dann nach Zielgewichten.
+    deficits = valued.map((position) => additionalCash * position.targetWeight);
+    deficitSum = sum(deficits);
+    if (deficitSum === 0) {
+      const largestWeight = valued.reduce(
+        (best, position, index) =>
+          position.targetWeight > valued[best].targetWeight ? index : best,
+        0,
+      );
+      deficits[largestWeight] = additionalCash;
+      deficitSum = additionalCash;
+    }
+  }
+  let lastFunded = -1;
+  deficits.forEach((deficit, index) => {
+    if (deficit > 0) lastFunded = index;
+  });
+  let allocated = 0;
+  const positions = valued.map((position, index) => {
+    const allocation =
+      additionalCash === 0 || deficits[index] === 0
+        ? 0
+        : index === lastFunded
+          ? Math.max(0, additionalCash - allocated)
+          : Math.min(
+              Math.max(0, additionalCash - allocated),
+              additionalCash * (deficits[index] / deficitSum),
+            );
+    allocated += allocation;
+    return {
+      symbol: position.symbol,
+      currentValue: position.currentValue,
+      targetWeight: position.targetWeight,
+      currentWeight: currentValue > 0 ? position.currentValue / currentValue : 0,
+      allocation,
+      quantity: allocation / position.price,
+      afterWeight: afterValue > 0 ? (position.currentValue + allocation) / afterValue : 0,
+    };
+  });
+  return { currentValue, afterValue, invested: allocated, positions };
+}

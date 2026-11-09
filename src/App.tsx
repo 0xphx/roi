@@ -42,20 +42,30 @@ import {
 } from 'recharts';
 import type { Holding, Instrument, MarketResponse, Workspace } from './lib/types';
 import { currentPortfolio, portfolioHistory, riskMetrics } from './lib/analytics';
+import { downloadFile, parseHoldingsCsv, parseWorkspace } from './lib/workspace';
 import {
-  STORAGE_KEY,
-  downloadFile,
-  loadWorkspace,
-  parseHoldingsCsv,
-  parseWorkspace,
-} from './lib/workspace';
+  activePortfolio,
+  createPortfolio,
+  deletePortfolio,
+  loadPortfolioLibrary,
+  parsePortfolioLibrary,
+  renamePortfolio,
+  savePortfolioLibraryIfUnchanged,
+  selectPortfolio,
+  LIBRARY_STORAGE_KEY,
+} from './lib/portfolio-library';
+import type { PortfolioLibrary } from './lib/portfolio-library';
 import { CLASS_LABEL, dateLabel, decimal, euro, money, pct, shortDate } from './lib/format';
 import { INSTRUMENTS, INSTRUMENT_BY_SYMBOL } from './data/catalog';
 import snapshot from './data/market-snapshot.json';
 import { loadMarketData } from './lib/market-client';
 import { PlannerPage, RiskPage, StressPage, BacktestPage } from './components/AnalysisPages';
+import { ComparePage } from './components/ComparePage';
+import { PortfolioManager } from './components/PortfolioManager';
+import { CashRebalance } from './components/CashRebalance';
 
-type Page = 'overview' | 'portfolio' | 'planner' | 'risk' | 'stress' | 'backtest' | 'markets';
+type Page =
+  'overview' | 'portfolio' | 'planner' | 'risk' | 'stress' | 'backtest' | 'compare' | 'markets';
 const NAV: { id: Page; label: string }[] = [
   { id: 'overview', label: 'Übersicht' },
   { id: 'portfolio', label: 'Portfolio' },
@@ -63,6 +73,7 @@ const NAV: { id: Page; label: string }[] = [
   { id: 'risk', label: 'Risikoanalyse' },
   { id: 'stress', label: 'Stresstest' },
   { id: 'backtest', label: 'Backtest' },
+  { id: 'compare', label: 'Strategievergleich' },
   { id: 'markets', label: 'Märkte' },
 ];
 const tooltipStyle = {
@@ -174,15 +185,23 @@ function Modal({
 const PAGES_MODE = import.meta.env.MODE === 'github-pages';
 
 export default function App() {
-  const [loaded] = useState(loadWorkspace);
-  const [workspace, setWorkspace] = useState<Workspace>(loaded.workspace);
+  const [loaded] = useState(loadPortfolioLibrary);
+  const [library, setLibrary] = useState<PortfolioLibrary>(loaded.library);
+  const libraryRef = useRef(loaded.library);
+  const storedValueRef = useRef(loaded.storedValue);
+  const currentEntry = activePortfolio(library);
+  const workspace = currentEntry.workspace;
+  const [importRevision, setImportRevision] = useState(0);
+  const [pendingImport, setPendingImport] = useState<PortfolioLibrary | null>(null);
   const [market, setMarket] = useState<MarketResponse>(snapshot as MarketResponse);
   const [page, setPage] = useState<Page>(getPage);
   const [sidebar, setSidebar] = useState(false);
   const [loading, setLoading] = useState(false);
   const [notice, setNotice] = useState(loaded.error || '');
   const [noticeError, setNoticeError] = useState(!!loaded.error);
-  const [dialog, setDialog] = useState<'search' | 'sources' | 'help' | 'settings' | null>(null);
+  const [dialog, setDialog] = useState<
+    'search' | 'sources' | 'help' | 'settings' | 'portfolios' | 'import-library' | null
+  >(null);
   const [edit, setEdit] = useState<Holding | 'new' | null>(null);
   const [preselected, setPreselected] = useState('VTI');
   const [selectedAsset, setSelectedAsset] = useState<string | null>(null);
@@ -192,13 +211,29 @@ export default function App() {
     setNotice(text);
     setNoticeError(error);
   }
-  function update(next: Workspace) {
+  function commitLibrary(next: PortfolioLibrary) {
     try {
-      const valid = parseWorkspace(next);
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(valid));
-      setWorkspace(valid);
+      const saved = savePortfolioLibraryIfUnchanged(next, storedValueRef.current);
+      libraryRef.current = saved.library;
+      storedValueRef.current = saved.storedValue;
+      setLibrary(saved.library);
       return true;
     } catch (e) {
+      try {
+        const actual = localStorage.getItem(LIBRARY_STORAGE_KEY);
+        if (actual !== null && actual !== storedValueRef.current) {
+          const latest = parsePortfolioLibrary(JSON.parse(actual));
+          libraryRef.current = latest;
+          storedValueRef.current = actual;
+          setLibrary(latest);
+          setDialog(null);
+          setEdit(null);
+          setSelectedAsset(null);
+          setImportRevision((value) => value + 1);
+        }
+      } catch {
+        /* Preserve the opened collection when external storage is unreadable. */
+      }
       notify(
         e instanceof DOMException
           ? 'Der Browser konnte die Änderung nicht speichern. Prüfe den verfügbaren Speicher und exportiere eine Sicherung.'
@@ -207,6 +242,40 @@ export default function App() {
       );
       return false;
     }
+  }
+  function mutateLibrary(transform: (current: PortfolioLibrary) => PortfolioLibrary) {
+    try {
+      return commitLibrary(transform(libraryRef.current));
+    } catch (error) {
+      notify((error as Error).message, true);
+      return false;
+    }
+  }
+  function update(next: Workspace) {
+    if (libraryRef.current.activeId !== currentEntry.id) {
+      notify(
+        'Das aktive Portfolio wurde inzwischen gewechselt. Bitte öffne die Eingabe erneut.',
+        true,
+      );
+      return false;
+    }
+    return mutateLibrary((current) => ({
+      ...current,
+      portfolios: current.portfolios.map((item) =>
+        item.id === current.activeId ? { ...item, workspace: parseWorkspace(next) } : item,
+      ),
+    }));
+  }
+  function switchPortfolio(id: string) {
+    const saved = mutateLibrary((current) => selectPortfolio(current, id));
+    if (saved) {
+      setDialog(null);
+      setEdit(null);
+      setSelectedAsset(null);
+      setSidebar(false);
+      window.scrollTo({ top: 0 });
+    }
+    return saved;
   }
   function navigate(next: Page) {
     location.hash = next;
@@ -218,6 +287,29 @@ export default function App() {
     const handler = () => setPage(getPage());
     window.addEventListener('hashchange', handler);
     return () => window.removeEventListener('hashchange', handler);
+  }, []);
+  useEffect(() => {
+    const sync = (event: StorageEvent) => {
+      if (event.key !== LIBRARY_STORAGE_KEY || !event.newValue) return;
+      try {
+        const next = parsePortfolioLibrary(JSON.parse(event.newValue));
+        libraryRef.current = next;
+        storedValueRef.current = event.newValue;
+        setLibrary(next);
+        setDialog(null);
+        setEdit(null);
+        setSelectedAsset(null);
+        setImportRevision((value) => value + 1);
+        notify('Portfolios wurden in einem anderen Fenster aktualisiert.');
+      } catch {
+        notify(
+          'Die Änderung aus einem anderen Fenster konnte nicht gelesen werden. Deine geöffneten Daten bleiben erhalten.',
+          true,
+        );
+      }
+    };
+    window.addEventListener('storage', sync);
+    return () => window.removeEventListener('storage', sync);
   }, []);
   useEffect(() => {
     if (!notice) return;
@@ -297,13 +389,28 @@ export default function App() {
     });
   }
   async function importFile(file: File) {
+    const targetId = libraryRef.current.activeId;
+    const startingValue = storedValueRef.current;
     try {
       if (file.size > 1024 * 1024) throw new Error('Bitte eine Datei unter 1 MB wählen.');
       const text = await file.text();
+      if (targetId !== libraryRef.current.activeId || startingValue !== storedValueRef.current) {
+        throw new Error(
+          'Die Portfolios wurden während des Dateilesens geändert. Bitte wähle die Importdatei erneut.',
+        );
+      }
       const next = file.name.toLowerCase().endsWith('.csv')
         ? { ...workspace, holdings: parseHoldingsCsv(text) }
         : JSON.parse(text);
-      if (update(parseWorkspace(next))) notify(`${file.name} wurde importiert.`);
+      if (next?.kind === 'roi-portfolio-library') {
+        setPendingImport(parsePortfolioLibrary(next));
+        setDialog('import-library');
+        return;
+      }
+      if (update(parseWorkspace(next))) {
+        setImportRevision((value) => value + 1);
+        notify(`${file.name} wurde in das aktive Portfolio importiert.`);
+      }
     } catch (e) {
       notify((e as Error).message, true);
     }
@@ -313,7 +420,14 @@ export default function App() {
       `roi-workspace-${new Date().toISOString().slice(0, 10)}.json`,
       JSON.stringify(workspace, null, 2),
     );
-    notify('Dein Workspace wurde exportiert.');
+    notify('Das aktive Portfolio wurde exportiert.');
+  }
+  function exportLibrary() {
+    downloadFile(
+      `roi-portfolios-${new Date().toISOString().slice(0, 10)}.json`,
+      JSON.stringify(library, null, 2),
+    );
+    notify('Alle Portfolios wurden exportiert.');
   }
   const dates = Object.values(market.series)
     .map((s) => s.asOf)
@@ -338,9 +452,35 @@ export default function App() {
           ROI
         </button>
         <p className="sidebar-caption">Portfolio & Analyse</p>
+        <div className="sidebar-portfolio">
+          <label htmlFor="active-portfolio">Aktives Portfolio</label>
+          <select
+            id="active-portfolio"
+            value={library.activeId}
+            onChange={(event) => switchPortfolio(event.target.value)}
+          >
+            {library.portfolios.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.workspace.portfolioName}
+              </option>
+            ))}
+          </select>
+          <button
+            className="text-link"
+            onClick={() => {
+              setDialog('portfolios');
+              setSidebar(false);
+            }}
+          >
+            Portfolios verwalten
+          </button>
+        </div>
         <nav aria-label="Hauptnavigation">
-          {NAV.map((nav, i) => (
-            <div key={nav.id} className={i === 3 || i === 6 ? 'nav-group-start' : undefined}>
+          {NAV.map((nav) => (
+            <div
+              key={nav.id}
+              className={nav.id === 'risk' || nav.id === 'markets' ? 'nav-group-start' : undefined}
+            >
               <button
                 className={`nav-link ${page === nav.id ? 'active' : ''}`}
                 onClick={() => navigate(nav.id)}
@@ -398,7 +538,7 @@ export default function App() {
             </button>
           </div>
         </header>
-        <main className="main-content">
+        <main className="main-content" key={`${currentEntry.id}:${importRevision}`}>
           {page === 'overview' && (
             <>
               <div className="page-heading">
@@ -418,7 +558,7 @@ export default function App() {
                 </div>
               </div>
               <div className="overview-context">
-                <button className="portfolio-name" onClick={() => setDialog('settings')}>
+                <button className="portfolio-name" onClick={() => setDialog('portfolios')}>
                   {workspace.portfolioName}
                   <ChevronDown size={13} />
                 </button>
@@ -565,6 +705,7 @@ export default function App() {
                 </div>
               </div>
               <RebalanceCard workspace={workspace} market={market} onChange={update} />
+              <CashRebalance workspace={workspace} market={market} />
               <div className="note">
                 <BookOpen size={17} />
                 <span>
@@ -580,6 +721,7 @@ export default function App() {
           {page === 'risk' && <RiskPage {...common} />}
           {page === 'stress' && <StressPage {...common} />}
           {page === 'backtest' && <BacktestPage {...common} />}
+          {page === 'compare' && <ComparePage library={library} market={market} />}
           {page === 'markets' && (
             <MarketsPage
               workspace={workspace}
@@ -647,9 +789,10 @@ export default function App() {
             }
           }}
           onDelete={(id) => {
-            update({ ...workspace, holdings: workspace.holdings.filter((h) => h.id !== id) });
-            setEdit(null);
-            notify('Position entfernt.');
+            if (update({ ...workspace, holdings: workspace.holdings.filter((h) => h.id !== id) })) {
+              setEdit(null);
+              notify('Position entfernt.');
+            }
           }}
         />
       )}
@@ -829,7 +972,79 @@ export default function App() {
             setDialog(null);
             importRef.current?.click();
           }}
+          onExportAll={exportLibrary}
+          onManage={() => setDialog('portfolios')}
         />
+      )}
+      {dialog === 'portfolios' && (
+        <Modal title="Portfolios verwalten" wide onClose={() => setDialog(null)}>
+          <PortfolioManager
+            library={library}
+            market={market}
+            onSelect={switchPortfolio}
+            onCreate={(name, duplicateId) => {
+              const saved = mutateLibrary((current) => createPortfolio(current, name, duplicateId));
+              if (saved) {
+                setDialog(null);
+                notify('Portfolio erstellt und geöffnet.');
+              }
+              return saved;
+            }}
+            onRename={(id, name) => mutateLibrary((current) => renamePortfolio(current, id, name))}
+            onDelete={(id) => mutateLibrary((current) => deletePortfolio(current, id))}
+            onExport={exportLibrary}
+            onImport={() => {
+              setDialog(null);
+              importRef.current?.click();
+            }}
+          />
+        </Modal>
+      )}
+      {dialog === 'import-library' && pendingImport && (
+        <Modal
+          title="Gesamtsicherung importieren"
+          onClose={() => {
+            setDialog(null);
+            setPendingImport(null);
+          }}
+        >
+          <p className="muted">
+            Diese Datei enthält mehrere Portfolios. Beim Import werden die aktuell in diesem Browser
+            gespeicherten Portfolios vollständig ersetzt.
+          </p>
+          <div className="library-import-summary">
+            <p>Aktuell: {library.portfolios.length} Portfolios</p>
+            <p>Aus der Sicherung: {pendingImport.portfolios.length} Portfolios</p>
+            <p>Danach aktiv: {activePortfolio(pendingImport).workspace.portfolioName}</p>
+          </div>
+          <button className="text-link" onClick={exportLibrary}>
+            Vorher aktuelle Gesamtsicherung herunterladen
+          </button>
+          <div className="modal-actions">
+            <button
+              className="btn"
+              onClick={() => {
+                setDialog(null);
+                setPendingImport(null);
+              }}
+            >
+              Abbrechen
+            </button>
+            <button
+              className="btn btn-primary"
+              onClick={() => {
+                if (commitLibrary(pendingImport)) {
+                  setPendingImport(null);
+                  setDialog(null);
+                  setImportRevision((value) => value + 1);
+                  notify('Gesamtsicherung importiert.');
+                }
+              }}
+            >
+              Alle Portfolios ersetzen
+            </button>
+          </div>
+        </Modal>
       )}
     </div>
   );
@@ -1728,12 +1943,16 @@ function SettingsModal({
   onChange,
   onExport,
   onImport,
+  onExportAll,
+  onManage,
 }: {
   workspace: Workspace;
   onClose: () => void;
-  onChange: (w: Workspace) => void;
+  onChange: (w: Workspace) => boolean;
   onExport: () => void;
   onImport: () => void;
+  onExportAll: () => void;
+  onManage: () => void;
 }) {
   const [name, setName] = useState(workspace.portfolioName);
   const [rate, setRate] = useState(String(workspace.riskFreeRate * 100));
@@ -1742,8 +1961,8 @@ function SettingsModal({
       <form
         onSubmit={(e) => {
           e.preventDefault();
-          onChange({ ...workspace, portfolioName: name, riskFreeRate: Number(rate) / 100 });
-          onClose();
+          if (onChange({ ...workspace, portfolioName: name, riskFreeRate: Number(rate) / 100 }))
+            onClose();
         }}
       >
         <div className="field">
@@ -1775,17 +1994,25 @@ function SettingsModal({
         <div className="settings-backup">
           <h3>Datensicherung</h3>
           <p className="muted">
-            Lokale Speicherung in diesem Browser. Sichere Positionen, Watchlist und Planungsannahmen
-            als JSON.
+            Das aktive Portfolio oder alle Portfolios mit Positionen, Watchlists und Anlageplänen
+            als JSON sichern.
           </p>
           <button className="btn" type="button" onClick={onExport}>
             <Download size={15} />
-            Workspace exportieren
+            Aktives Portfolio exportieren
+          </button>
+          <button className="btn" type="button" onClick={onExportAll}>
+            Alle Portfolios exportieren
           </button>
           <button className="btn" type="button" onClick={onImport}>
             <FileUp size={15} />
             Importieren
           </button>
+          <p className="muted">
+            <button className="text-link" type="button" onClick={onManage}>
+              Portfolios verwalten
+            </button>
+          </p>
         </div>
         <div className="modal-actions">
           <button className="btn" type="button" onClick={onClose}>
