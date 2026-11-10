@@ -322,7 +322,7 @@ export function PlannerPage({ workspace, market: _market, onChange }: AnalysisPa
               <div>
                 <h3>Vermögensentwicklung</h3>
                 <p className="muted">
-                  Im schattierten Bereich liegen 80 % der simulierten Verläufe.
+                  Der schattierte Bereich zeigt je Monat die mittleren 80 % der simulierten Werte.
                 </p>
               </div>
               <div className="analysis-segment">
