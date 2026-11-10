@@ -265,7 +265,7 @@ export function ComparePage({ library, market }: ComparePageProps) {
         <div>
           <h1>Strategievergleich</h1>
           <p className="muted">
-            Gespeicherte Portfolios unter gleichen Bedingungen historisch vergleichen.
+            Portfolios mit denselben Einzahlungen und Kosten historisch vergleichen.
           </p>
         </div>
       </div>
@@ -273,7 +273,7 @@ export function ComparePage({ library, market }: ComparePageProps) {
         <fieldset className="compare-selection">
           <legend>Portfolios auswählen</legend>
           <p className="compare-help">
-            Bis zu vier Portfolios. Berechnet werden ihre Zielgewichtungen, unabhängig von den
+            Wähle bis zu vier Portfolios. Es gelten die gespeicherten Zielgewichte, nicht die
             aktuellen Stückzahlen.
           </p>
           <div className="compare-options">
@@ -304,8 +304,8 @@ export function ComparePage({ library, market }: ComparePageProps) {
           </div>
           {library.portfolios.length < 2 && (
             <p className="compare-help compare-single-hint">
-              Lege ein weiteres Portfolio an, um unterschiedliche Strategien miteinander zu
-              vergleichen. Eine einzelne Strategie lässt sich bereits berechnen.
+              Mit einem Portfolio kannst du bereits einen Backtest berechnen. Für den Vergleich
+              brauchst du ein zweites.
             </p>
           )}
           {selection.length === 0 && (
@@ -377,8 +377,8 @@ export function ComparePage({ library, market }: ComparePageProps) {
           )}
           {dirty && (
             <p className="compare-draft-note" role="status">
-              Änderungen werden mit „Vergleich berechnen“ übernommen. Die Ergebnisse zeigen die
-              zuletzt berechnete Auswahl.
+              Die Ergebnisse zeigen noch die vorherige Berechnung. Mit „Vergleich berechnen“
+              übernimmst du die Änderungen.
             </p>
           )}
         </div>
@@ -493,7 +493,7 @@ export function ComparePage({ library, market }: ComparePageProps) {
                     <th className="numeric">Endvermögen</th>
                     <th className="numeric">Rendite gesamt¹</th>
                     <th className="numeric">Rendite p. a.¹</th>
-                    <th className="numeric">Max. Drawdown¹</th>
+                    <th className="numeric">Größter Rückgang¹</th>
                     <th className="numeric">Zusatzkosten</th>
                   </tr>
                 </thead>
@@ -527,8 +527,8 @@ export function ComparePage({ library, market }: ComparePageProps) {
             </div>
             <p className="compare-help compare-table-note">
               ¹ Zeitgewichtet bzw. einzahlungsbereinigt: Zusätzliche Einzahlungen werden nicht als
-              Rendite gezählt. Absolute Zusatzkosten unterscheiden sich bei gleicher Kostenquote
-              durch die jeweiligen Portfolioverläufe.
+              Rendite gezählt. Die Kostenbeträge können trotz gleicher Kostenquote unterschiedlich
+              ausfallen, weil sich die Portfoliowerte anders entwickeln.
             </p>
           </section>
           <details className="compare-sources">
@@ -600,7 +600,7 @@ export function ComparePage({ library, market }: ComparePageProps) {
           enthaltene Fondskosten sind bereits berücksichtigt. Keine Steuern, Spreads oder
           Ordergebühren.{' '}
           {hasBenchmark
-            ? 'SPY ist ein ETF-Proxy für den S&P 500 und verwendet dieselben Einzahlungen, ohne die modellierten Zusatzkosten.'
+            ? 'SPY bildet als ETF den S&P 500 ab. Im Vergleich gelten dieselben Einzahlungen, aber keine zusätzlich angesetzten Kosten.'
             : 'Ohne passende SPY-Kurse wird kein Benchmark angezeigt.'}
         </p>
         <p>

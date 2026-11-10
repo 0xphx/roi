@@ -3,6 +3,7 @@
 - Der Nutzer verlangt ausdrücklich: Änderungen immer mit Git versionieren, committen und zum konfigurierten GitHub-Remote pushen. Keine fremden Änderungen überschreiben und keine Secrets committen.
 - Oberfläche und Dokumentation sind deutschsprachig. Echte Marktdaten, Beispielbestände und Modellannahmen klar unterscheiden; keine erfundenen Kurs-Fallbacks.
 - Das Design soll minimalistisch und sachlich bleiben: klare Typografie, wenige Farben, flache Abschnitte. Keine Werbeslogans, dekorativen Verläufe, Promotion-Karten oder erfundenen Profilangaben. Finanzielle Hinweise und gut lesbare Beschriftungen erhalten.
+- Gestaltung und Sprache sollen sorgfältig und eigenständig wirken: Inhalte nach Bedeutung gewichten, Zahlen vergleichbar ausrichten, Abstände und Bedienelemente konsistent halten. Keine austauschbaren Kartenraster als Standard, keine Floskeln oder unnötigen Fachwörter in der Bedienung. Leere Ansichten, Fehler und mobile Nutzung mitgestalten. Keine Behauptung über menschliche Urheberschaft als Gestaltungsmittel verwenden.
 - Portfoliodaten bleiben lokal im Browser. Änderungen an Speicherung, Berechnungen und Datenquellen transparent dokumentieren.
 - Rechenlogik in `src/lib/analytics.ts`, Datenzugriff in `server/market.ts`, Oberfläche in `src/` halten. Fachliche Fehler durch aussagekräftige Tests absichern.
 - Vor dem Commit relevante Prüfungen ausführen: `npm test`, `npm run build`, `node scripts/smoke-test.mjs`. Bei Oberflächenänderungen zusätzlich im Browser prüfen.

@@ -1,5 +1,12 @@
 # Änderungen
 
+## 1.1.1 — 2026-11-10
+
+- Portfoliowert stärker gewichtet und Zahlen in Bestands- und Rebalancing-Tabellen rechtsbündig ausgerichtet.
+- Navigation kompakter, mobile Menüeinträge leichter bedienbar und Bearbeiten-Aktion eindeutig gekennzeichnet.
+- Beschriftungen und Hinweise sprachlich überarbeitet; Gestaltungsgrundsätze für weitere Änderungen festgehalten.
+- Berechnungen, Datenquellen und lokale Speicherung unverändert.
+
 ## 1.1.0 — 2026-11-09
 
 - Lokale Sammlung mit bis zu zwölf Portfolios, getrennten Plänen und Watchlists.

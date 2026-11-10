@@ -1,6 +1,10 @@
-# ROI — Dein Investment-Workspace
+# ROI — Portfolioanalyse und Anlageplanung
 
-Eine deutschsprachige Anwendung zum Planen, Vergleichen und Testen von Investments. Die erste vollständige Version verbindet Portfolioverwaltung, echte historische Marktdaten, Sparplanung, Risikoanalyse, Stresstests und Backtesting in einem Workspace.
+Eine deutschsprachige Anwendung für Portfolios, Sparpläne und Risikoanalysen. Mit historischen Marktdaten lassen sich Strategien vergleichen und Annahmen prüfen. Bestände und Pläne bleiben lokal im Browser.
+
+## Gestaltung
+
+ROI verwendet eine zurückhaltende Oberfläche mit klarer Gewichtung der Informationen. Der Portfoliowert steht im Vordergrund; weitere Kennzahlen und Tabellen lassen sich direkt vergleichen. Farbe kennzeichnet überwiegend Gewinne und Verluste. Beschriftungen benennen die jeweilige Handlung, Hinweise erklären Datenstand und Modellgrenzen. Diese Grundsätze gelten auch für weitere Funktionen; sie sind in `AGENTS.md` festgehalten.
 
 ## GitHub Pages
 

@@ -50,10 +50,9 @@ export function CashRebalance({
     <section className="card cash-rebalance">
       <div className="card-header">
         <div>
-          <h2>Rebalancing mit neuem Kapital</h2>
+          <h2>Neues Kapital verteilen</h2>
           <p className="muted">
-            Zusätzliches Kapital auf untergewichtete Positionen verteilen, ohne bestehende
-            Positionen zu verkaufen.
+            Mit einer Einzahlung die Zielgewichte annähern, ohne Positionen zu verkaufen.
           </p>
         </div>
       </div>
@@ -88,7 +87,7 @@ export function CashRebalance({
         </button>
         {result && (
           <button type="button" className="btn" onClick={exportAllocation}>
-            CSV exportieren
+            Verteilung als CSV speichern
           </button>
         )}
       </form>
@@ -109,10 +108,10 @@ export function CashRebalance({
               Aktueller Marktwert<strong>{euro(result.currentValue, 2)}</strong>
             </span>
             <span>
-              Neues Kapital<strong>{euro(result.invested, 2)}</strong>
+              Einzahlung<strong>{euro(result.invested, 2)}</strong>
             </span>
             <span>
-              Marktwert nach Einzahlung<strong>{euro(result.afterValue, 2)}</strong>
+              Wert nach Verteilung<strong>{euro(result.afterValue, 2)}</strong>
             </span>
           </div>
           <div className="table-wrap">
@@ -120,11 +119,11 @@ export function CashRebalance({
               <thead>
                 <tr>
                   <th>Position</th>
-                  <th>Aktuell</th>
-                  <th>Ziel</th>
+                  <th>Anteil heute</th>
+                  <th>Zielanteil</th>
                   <th>Zukauf (EUR)</th>
-                  <th>Zusätzliche Stückzahl</th>
-                  <th>Danach</th>
+                  <th>Zukauf in Stück</th>
+                  <th>Anteil danach</th>
                 </tr>
               </thead>
               <tbody>
@@ -148,12 +147,12 @@ export function CashRebalance({
           </div>
           <p className="card-footnote">
             {Math.abs(totalTarget - 100) > 0.01
-              ? `Die Zielgewichte (${decimal(totalTarget)} %) werden auf 100 % normiert. `
+              ? `Die Zielgewichte (${decimal(totalTarget)} %) werden auf 100 % umgerechnet. `
               : ''}
             Nur rechnerische Zukäufe mit Bruchstücken; keine Orderausführung. Verteilung
             proportional zu den fehlenden Beträgen der Zielallokation nach Einzahlung. Ohne
             Gebühren, Steuern und Spreads; aktuelle USD-Kurse mit konstantem EUR/USD-Referenzkurs.
-            Neue Zielgewichte können durch eine Einzahlung allein unerreichbar bleiben.
+            Manche Zielgewichte lassen sich mit einer Einzahlung allein nicht erreichen.
           </p>
         </>
       )}

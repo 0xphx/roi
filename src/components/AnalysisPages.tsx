@@ -196,7 +196,10 @@ export function PlannerPage({ workspace, market: _market, onChange }: AnalysisPa
   };
   return (
     <>
-      <Heading title="Anlageplan" text="Sparrate, Zeithorizont und Renditeannahmen vergleichen." />
+      <Heading
+        title="Anlageplan"
+        text="Vermögen mit Startkapital und monatlicher Sparrate berechnen."
+      />
       <div className="analysis-planner-grid">
         <form className="card analysis-form-card" onSubmit={run}>
           <div className="card-header">
@@ -223,7 +226,7 @@ export function PlannerPage({ workspace, market: _market, onChange }: AnalysisPa
               suffix="€"
             />
             <NumberField
-              label="Anlagehorizont"
+              label="Laufzeit"
               value={draft.years}
               onChange={(v) => set('years', v)}
               min={1}
@@ -244,7 +247,7 @@ export function PlannerPage({ workspace, market: _market, onChange }: AnalysisPa
           <p className="analysis-label">Modellannahmen pro Jahr</p>
           <div className="form-grid">
             <NumberField
-              label="Erwartete Rendite"
+              label="Angenommene Rendite"
               value={Number((draft.expectedReturn * 100).toFixed(3))}
               onChange={(v) => set('expectedReturn', v / 100)}
               min={-50}
@@ -285,22 +288,21 @@ export function PlannerPage({ workspace, market: _market, onChange }: AnalysisPa
           )}
           {dirty && (
             <p className="analysis-draft-note" role="status">
-              Deine Änderungen werden mit „Berechnen“ übernommen. Die Grafik zeigt den gespeicherten
-              Plan.
+              Die Grafik zeigt noch den gespeicherten Plan. Mit „Änderungen berechnen“ übernimmst du
+              die neuen Werte.
             </p>
           )}
           <button className="btn btn-primary analysis-full-button" type="submit">
             {dirty ? 'Änderungen berechnen' : 'Plan berechnen'}
           </button>
           <p className="analysis-form-foot">
-            {workspace.plan.simulations.toLocaleString('de-DE')} simulierte Pfade · reproduzierbare
-            Berechnung
+            {workspace.plan.simulations.toLocaleString('de-DE')} simulierte Verläufe
           </p>
         </form>
         <div className="analysis-stack">
           <div className="grid-three analysis-metrics">
             <Metric
-              label="Median des Endvermögens"
+              label="Endvermögen (Median)"
               value={projection ? money(projection.median) : '—'}
               note={`Nach ${workspace.plan.years} Jahren · nominal`}
             />
@@ -319,7 +321,9 @@ export function PlannerPage({ workspace, market: _market, onChange }: AnalysisPa
             <div className="card-header">
               <div>
                 <h3>Vermögensentwicklung</h3>
-                <p className="muted">Der Korridor zeigt das 10. bis 90. Perzentil.</p>
+                <p className="muted">
+                  Im schattierten Bereich liegen 80 % der simulierten Verläufe.
+                </p>
               </div>
               <div className="analysis-segment">
                 <button
@@ -343,7 +347,7 @@ export function PlannerPage({ workspace, market: _market, onChange }: AnalysisPa
             <div
               className="analysis-chart"
               role="img"
-              aria-label="Prognose mit Median, Einzahlung und Bandbreite zwischen 10. und 90. Perzentil"
+              aria-label="Simulierte Vermögensentwicklung mit Median, Einzahlungen und 10.–90.-Perzentil"
             >
               <ResponsiveContainer width="100%" height="100%">
                 <ComposedChart data={chartData} margin={{ top: 16, right: 14, left: 0, bottom: 0 }}>
@@ -509,8 +513,8 @@ export function RiskPage({ workspace, market, onChange }: AnalysisPageProps) {
       />
       {!sufficient ? (
         <NoData>
-          Für stabile Kennzahlen werden mindestens 31 gemeinsame Kurstage aller Positionen benötigt.
-          Lade die Marktdaten oder passe dein Portfolio an.
+          Für diese Auswertung werden mindestens 31 gemeinsame Kurstage benötigt. Prüfe, ob für alle
+          Positionen ausreichend Kursdaten vorliegen.
         </NoData>
       ) : (
         <>
@@ -521,9 +525,9 @@ export function RiskPage({ workspace, market, onChange }: AnalysisPageProps) {
               note="Annualisierte tägliche Schwankung"
             />
             <Metric
-              label="Maximaler Drawdown"
+              label="Größter Rückgang"
               value={`−${percent(risk.maxDrawdown)}`}
-              note="Größter historischer Rückgang"
+              note="Vom vorherigen Höchststand aus gerechnet"
             />
             <Metric
               label="Sharpe Ratio"
@@ -539,7 +543,7 @@ export function RiskPage({ workspace, market, onChange }: AnalysisPageProps) {
           <div className="card analysis-chart-card">
             <div className="card-header">
               <div>
-                <h3>Drawdown</h3>
+                <h3>Rückgang vom Höchststand</h3>
                 <p className="muted">Rückgang vom jeweils zuvor erreichten Höchststand.</p>
               </div>
               <span className="analysis-meta">
@@ -641,7 +645,7 @@ export function RiskPage({ workspace, market, onChange }: AnalysisPageProps) {
               <div className="card-header">
                 <div>
                   <h3>Weitere Kennzahlen</h3>
-                  <p className="muted">Historische Renditen und Verlustmaße</p>
+                  <p className="muted">Rendite und Verluste im verfügbaren Zeitraum</p>
                 </div>
               </div>
               <div className="analysis-detail-row">
@@ -709,19 +713,19 @@ const presets: {
   {
     id: 'financial',
     name: 'Finanzkrise',
-    subtitle: 'Breiter Risikoabbau',
+    subtitle: 'Starke Verluste bei Risikoanlagen',
     shocks: { equity: -0.45, bond: 0.05, gold: 0.08, crypto: -0.65, realestate: -0.45 },
   },
   {
     id: 'pandemic',
     name: 'Pandemie',
-    subtitle: 'Plötzlicher Liquiditätsschock',
+    subtitle: 'Abrupter Markteinbruch',
     shocks: { equity: -0.32, bond: -0.04, gold: -0.08, crypto: -0.5, realestate: -0.35 },
   },
   {
     id: 'rates',
     name: 'Zinsschock',
-    subtitle: 'Aktien und Anleihen unter Druck',
+    subtitle: 'Sinkende Aktien- und Anleihekurse',
     shocks: { equity: -0.22, bond: -0.18, gold: -0.08, crypto: -0.5, realestate: -0.3 },
   },
   {
@@ -774,7 +778,7 @@ export function StressPage({ workspace, market }: AnalysisPageProps) {
           <div className="card-header">
             <div>
               <h3>Schocks nach Anlageklasse</h3>
-              <p className="muted">Annahmen frei anpassen.</p>
+              <p className="muted">Kursänderungen mit den Reglern festlegen.</p>
             </div>
           </div>
           <div className="analysis-shocks">
@@ -809,7 +813,7 @@ export function StressPage({ workspace, market }: AnalysisPageProps) {
             onClick={() => select(presets[0].id)}
           >
             {' '}
-            Annahmen zurücksetzen
+            Auf Finanzkrise zurücksetzen
           </button>
         </div>
         <div className="analysis-stack">
@@ -832,7 +836,9 @@ export function StressPage({ workspace, market }: AnalysisPageProps) {
                       {percent(Math.abs(result.lossPercent))}
                     </span>
                   </div>
-                  <p className="muted">Simulierte Wertänderung durch die gewählten Schocks</p>
+                  <p className="muted">
+                    Bei unverändertem Bestand und den gewählten Kursänderungen.
+                  </p>
                 </div>
                 <div className="analysis-stress-values">
                   <span>
@@ -847,7 +853,7 @@ export function StressPage({ workspace, market }: AnalysisPageProps) {
                 <div className="card-header">
                   <div>
                     <h3>Wertänderung nach Position</h3>
-                    <p className="muted">Wertänderung je Position in Euro.</p>
+                    <p className="muted">Beträge in Euro.</p>
                   </div>
                 </div>
                 <div
@@ -912,7 +918,7 @@ export function StressPage({ workspace, market }: AnalysisPageProps) {
                   <th>Position</th>
                   <th>Anlageklasse</th>
                   <th>Aktueller Wert</th>
-                  <th>Modellschock</th>
+                  <th>Angenommene Kursänderung</th>
                   <th>Wertänderung</th>
                   <th>Nach dem Schock</th>
                 </tr>
@@ -1071,7 +1077,7 @@ export function BacktestPage({ workspace, market }: AnalysisPageProps) {
           />
           <button className="btn btn-primary" type="submit">
             {' '}
-            Strategie testen
+            Backtest berechnen
           </button>
         </div>
         {error && (
@@ -1089,7 +1095,7 @@ export function BacktestPage({ workspace, market }: AnalysisPageProps) {
         <>
           <div className="grid-four analysis-metrics">
             <Metric
-              label="Portfolio am Ende"
+              label="Endwert des Portfolios"
               value={money(result.finalValue)}
               note={`${money(result.contributed)} insgesamt eingezahlt`}
             />
@@ -1099,12 +1105,12 @@ export function BacktestPage({ workspace, market }: AnalysisPageProps) {
               note={`${percent(result.annualReturn)} annualisiert`}
             />
             <Metric
-              label="Maximaler Drawdown"
+              label="Größter Rückgang"
               value={`−${percent(result.maxDrawdown)}`}
               note="Einzahlungsbereinigter Rückgang"
             />
             <Metric
-              label="Modellierte Kosten"
+              label="Zusätzliche Kosten"
               value={money(result.fees)}
               note={`${percent(submitted.fee, 2)} Zusatzkosten p. a.`}
             />
@@ -1194,7 +1200,7 @@ export function BacktestPage({ workspace, market }: AnalysisPageProps) {
           <div className="grid-two">
             <div className="card analysis-form-card">
               <div className="card-header">
-                <h3>Getestete Zielallokation</h3>
+                <h3>Verwendete Zielgewichte</h3>
               </div>
               {workspace.holdings
                 .filter((h) => h.targetWeight > 0)
@@ -1221,8 +1227,8 @@ export function BacktestPage({ workspace, market }: AnalysisPageProps) {
                   );
                 })}
               <p className="analysis-help">
-                Zielgewichte werden auf 100 % normiert. Die Strategie startet mit diesen Gewichten;
-                Sparraten fließen gemäß Zielgewichtung zu.
+                Die Zielgewichte werden auf 100 % umgerechnet. Startkapital und Sparraten werden
+                nach diesen Anteilen verteilt.
               </p>
             </div>
             <div className="card analysis-form-card">
@@ -1238,14 +1244,14 @@ export function BacktestPage({ workspace, market }: AnalysisPageProps) {
               <div className="analysis-insight">
                 <p>
                   {hasBenchmark
-                    ? 'SPY steht als ETF-Proxy für den S&P 500. Gleiche Einzahlungen, ohne die modellierten Portfoliokosten.'
+                    ? 'SPY bildet als ETF den S&P 500 ab. Für den Vergleich gelten dieselben Einzahlungen, aber keine zusätzlich angesetzten Kosten.'
                     : 'Für SPY sind in diesem Zeitraum keine passenden Kurse vorhanden. Ein Benchmarkvergleich wird deshalb nicht angezeigt.'}
                 </p>
               </div>
               <div className="analysis-insight">
                 <p>
-                  Die aktuelle Auswahl kennt die Gewinner der Vergangenheit. Das Ergebnis kann durch
-                  Auswahl- und Überlebensverzerrungen beeinflusst sein.
+                  Die heutige Auswahl kann Wertpapiere bevorzugen, die sich bereits gut entwickelt
+                  haben oder heute noch existieren. Das kann den Rückblick verzerren.
                 </p>
               </div>
             </div>

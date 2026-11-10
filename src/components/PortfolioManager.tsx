@@ -41,8 +41,8 @@ export function PortfolioManager({
   return (
     <div className="portfolio-manager">
       <p className="muted portfolio-manager-intro">
-        Positionen, Watchlist und Anlageplan werden für jedes Portfolio getrennt in diesem Browser
-        gespeichert.
+        Jedes Portfolio hat eigene Positionen, eine Watchlist und einen Anlageplan. Alle Daten
+        bleiben in diesem Browser gespeichert.
       </p>
       <div className="portfolio-list" aria-label="Gespeicherte Portfolios">
         {library.portfolios.map((item) => {
@@ -75,7 +75,7 @@ export function PortfolioManager({
                     />
                   </div>
                   <button className="btn btn-small" type="submit">
-                    Speichern
+                    Namen speichern
                   </button>
                   <button className="text-link" type="button" onClick={() => setRenameId(null)}>
                     Abbrechen
@@ -116,7 +116,7 @@ export function PortfolioManager({
                         setName(`${item.workspace.portfolioName.slice(0, 70)} Kopie`);
                       }}
                     >
-                      Duplizieren
+                      Als Vorlage wählen
                     </button>
                     <button
                       className="text-link"
@@ -134,8 +134,8 @@ export function PortfolioManager({
               {deleteId === item.id && (
                 <div className="portfolio-delete-confirm">
                   <p>
-                    „{item.workspace.portfolioName}“ mit Positionen und Plan aus diesem Browser
-                    entfernen? Erstelle bei Bedarf vorher eine Gesamtsicherung.
+                    „{item.workspace.portfolioName}“ samt Positionen, Watchlist und Anlageplan
+                    entfernen? Sichere die Daten vorher, wenn du sie behalten möchtest.
                   </p>
                   <button
                     className="btn btn-small btn-danger"
@@ -199,9 +199,9 @@ export function PortfolioManager({
       <div className="portfolio-backup">
         <h3>Sicherung aller Portfolios</h3>
         <p className="muted">
-          Eine Gesamtsicherung enthält auch die Anlagepläne und Watchlists. Bestehende
-          Einzelportfolio- und CSV-Dateien lassen sich weiterhin in das aktive Portfolio
-          importieren.
+          Die Sicherung enthält alle Portfolios mit Anlageplänen und Watchlists. Dateien mit einem
+          einzelnen Portfolio sowie CSV-Dateien werden dagegen in das gerade geöffnete Portfolio
+          importiert.
         </p>
         <div className="portfolio-backup-actions">
           <button className="btn" onClick={onExport}>

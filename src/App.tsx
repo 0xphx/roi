@@ -15,7 +15,7 @@ import {
   FileUp,
   Globe2,
   Menu,
-  MoreHorizontal,
+  Pencil,
   Plus,
   RefreshCw,
   Search,
@@ -549,7 +549,7 @@ export default function App() {
                 <div className="heading-actions">
                   <button className="btn" onClick={exportJson}>
                     <Download size={16} />
-                    Exportieren
+                    Portfolio sichern
                   </button>
                   <button className="btn btn-primary" onClick={() => addAsset()}>
                     <Plus size={17} />
@@ -588,9 +588,9 @@ export default function App() {
                   note={<span>Heutiger Bestand rückgerechnet</span>}
                 />
                 <Metric
-                  label="Portfolio-Volatilität"
+                  label="Jährliche Schwankung"
                   value={pct(history.length >= 31 ? risk.volatility : NaN)}
-                  note={<span>Annualisierte Tagesschwankung</span>}
+                  note={<span>Aus Tagesrenditen hochgerechnet</span>}
                 />
                 <Metric
                   label="Monatlicher Sparplan"
@@ -697,10 +697,10 @@ export default function App() {
                 />
                 <div className="table-footer">
                   <span>
-                    <ShieldCheck size={14} /> Deine Positionen bleiben in diesem Browser.
+                    <ShieldCheck size={14} /> Positionen werden in diesem Browser gespeichert.
                   </span>
                   <button className="inline-link" onClick={exportJson}>
-                    Workspace sichern <Download size={13} />
+                    Portfolio sichern <Download size={13} />
                   </button>
                 </div>
               </div>
@@ -712,7 +712,7 @@ export default function App() {
                   <strong>CSV importieren:</strong> Spalten{' '}
                   <code>symbol,quantity,averageCost,targetWeight</code>, Dezimalpunkt verwenden.
                   Einstandspreise in der Handelswährung, Zielgewichte in Prozent. Ein Import ersetzt
-                  die Positionen; sichere deinen Workspace vorher über „Exportieren“.
+                  die Positionen im aktiven Portfolio. Lade vorher eine Sicherung herunter.
                 </span>
               </div>
             </>
@@ -750,7 +750,7 @@ export default function App() {
         type="file"
         accept=".json,.csv"
         className="visually-hidden"
-        aria-label="Workspace importieren"
+        aria-label="Portfolio importieren"
         onChange={(e) => {
           if (e.target.files?.[0]) void importFile(e.target.files[0]);
           e.target.value = '';
@@ -911,12 +911,12 @@ export default function App() {
         </Modal>
       )}
       {dialog === 'help' && (
-        <Modal title="So arbeitet dein Workspace" onClose={() => setDialog(null)} wide>
+        <Modal title="Berechnungen und Daten" onClose={() => setDialog(null)} wide>
           <div className="help-grid">
             {[
               {
                 icon: Wallet,
-                title: 'Dein Portfolio',
+                title: 'Beispielbestand',
                 text: 'Das Startportfolio enthält frei gewählte Beispielbestände und Einstandspreise. Ersetze sie durch deine Positionen. Es werden keine Depotdaten automatisch eingelesen.',
               },
               {
@@ -926,7 +926,7 @@ export default function App() {
               },
               {
                 icon: ShieldCheck,
-                title: 'Risiko verstehen',
+                title: 'Risikokennzahlen',
                 text: 'Volatilität basiert auf täglichen Renditen, annualisiert mit 252 Handelstagen. VaR und Expected Shortfall beschreiben historische Tagesverluste auf 95%-Niveau. Sie begrenzen zukünftige Verluste nicht.',
               },
               {
@@ -941,7 +941,7 @@ export default function App() {
               },
               {
                 icon: ShieldCheck,
-                title: 'Deine Daten',
+                title: 'Lokale Speicherung',
                 text:
                   'Positionen und Pläne werden lokal im Browser gespeichert. Es gibt keine Cloud-Synchronisierung, Bankanbindung oder Orderausführung. Exportiere regelmäßig eine JSON-Sicherung. ' +
                   (PAGES_MODE
@@ -1309,7 +1309,7 @@ function HoldingsTable({
                     aria-label={`${instrument.shortName} bearbeiten`}
                     onClick={() => onEdit(p)}
                   >
-                    <MoreHorizontal size={18} />
+                    <Pencil size={14} />
                   </button>
                 </td>
               </tr>
@@ -1554,7 +1554,7 @@ function RebalanceCard({
       <div className="card-header">
         <div>
           <h2>Zielallokation</h2>
-          <p className="muted">Aktuelle Gewichte im Vergleich zu deinen Zielwerten.</p>
+          <p className="muted">Aktuelle und geplante Verteilung des Portfolios.</p>
         </div>
         <button
           className="btn btn-small"
@@ -1575,8 +1575,8 @@ function RebalanceCard({
       </div>
       {Math.abs(sum - 100) > 0.01 && (
         <div className="note">
-          Deine Zielgewichte ergeben {decimal(sum)} %. Bearbeite sie auf insgesamt 100 %, um
-          konkrete Rebalancing-Beträge zu erhalten.
+          Die Zielgewichte ergeben {decimal(sum)} %. Für die Anpassungsbeträge müssen sie zusammen
+          100 % ergeben.
         </div>
       )}
       <div className="table-wrap">
