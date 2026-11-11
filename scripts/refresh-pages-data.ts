@@ -4,15 +4,16 @@ import { dirname, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import snapshotData from '../src/data/market-snapshot.json' with { type: 'json' };
 import { INSTRUMENTS } from '../src/data/catalog';
-import { parseMarketResponse } from '../src/lib/market-client';
-import type { MarketResponse, MarketSeries } from '../src/lib/types';
-import { fetchFreshFx, fetchFreshSeries } from '../server/market';
+import { parseFxHistory, parseMarketResponse } from '../src/lib/market-client';
+import type { FxHistory, MarketResponse, MarketSeries } from '../src/lib/types';
+import { fetchFreshFx, fetchFreshFxHistory, fetchFreshSeries } from '../server/market';
 
 export interface PagesDataMerge {
   fallback: unknown;
   published?: unknown;
   updates?: Record<string, MarketSeries>;
   fxUpdate?: MarketResponse['fx'];
+  fxHistoryUpdate?: FxHistory;
   errors?: Record<string, string>;
 }
 
@@ -21,8 +22,37 @@ function validDataset(input: unknown): MarketResponse | undefined {
   try {
     return parseMarketResponse(input, true);
   } catch {
-    return undefined;
+    // A broken optional FX history must not discard otherwise valid asset observations.
+    if (typeof input !== 'object' || input === null || Array.isArray(input)) return undefined;
+    const data = input as Record<string, unknown>;
+    if (typeof data.fx !== 'object' || data.fx === null || Array.isArray(data.fx)) return undefined;
+    const { history: _ignored, ...fx } = data.fx as Record<string, unknown>;
+    try {
+      return parseMarketResponse({ ...data, fx }, true);
+    } catch {
+      return undefined;
+    }
   }
+}
+
+/** Select one complete provider history; do not splice observations across retrievals. */
+function laterFxHistory(left: FxHistory | undefined, right: unknown): FxHistory | undefined {
+  let candidate: FxHistory;
+  try {
+    candidate = parseFxHistory(right, true);
+  } catch {
+    return left;
+  }
+  if (candidate.status === 'unavailable') return left;
+  if (!left || candidate.asOf > left.asOf) return candidate;
+  if (candidate.asOf < left.asOf) return left;
+  // Same end date: retain wider coverage before preferring a later genuine retrieval.
+  const first = candidate.rates[0].date;
+  const selectedFirst = left.rates[0].date;
+  if (first !== selectedFirst) return first < selectedFirst ? candidate : left;
+  if (candidate.rates.length !== left.rates.length)
+    return candidate.rates.length > left.rates.length ? candidate : left;
+  return Date.parse(candidate.fetchedAt) >= Date.parse(left.fetchedAt) ? candidate : left;
 }
 
 /** Prefer the latest actual market date; retrieval time only breaks same-day ties. */
@@ -39,6 +69,7 @@ export function mergePagesData({
   published,
   updates = {},
   fxUpdate,
+  fxHistoryUpdate,
   errors = {},
 }: PagesDataMerge): MarketResponse {
   const saved = [validDataset(fallback), validDataset(published)].filter(
@@ -73,7 +104,8 @@ export function mergePagesData({
   }
   const fxCandidates = saved.map((data) => data.fx).filter((fx) => fx.status !== 'unavailable');
   if (fxUpdate) {
-    const validated = validDataset({ ...saved[0], fx: fxUpdate });
+    const { history: _history, ...daily } = fxUpdate;
+    const validated = validDataset({ ...saved[0], fx: daily });
     if (validated && validated.fx.status !== 'unavailable') fxCandidates.push(validated.fx);
   }
   const fx = fxCandidates.reduce<MarketResponse['fx'] | undefined>(
@@ -81,14 +113,23 @@ export function mergePagesData({
     undefined,
   );
   if (!fx) throw new Error('Kein verwendbarer echter EUR/USD-Referenzkurs.');
+  let history: FxHistory | undefined;
+  for (const data of saved) history = laterFxHistory(history, data.fx.history);
+  history = laterFxHistory(history, fxUpdate?.history);
+  history = laterFxHistory(history, fxHistoryUpdate);
   // This is the latest original retrieval timestamp, not the publication/build time.
   const fetchedAt = [
     ...saved.map((data) => data.fetchedAt),
     ...Object.values(series).map((s) => s.fetchedAt),
+    ...(history ? [history.fetchedAt] : []),
   ]
     .sort((a, b) => Date.parse(a) - Date.parse(b))
     .at(-1)!;
-  return parseMarketResponse({ series, fx: { ...fx, status: 'cached' }, fetchedAt }, true);
+  const { history: _selectedHistory, ...daily } = fx;
+  return parseMarketResponse(
+    { series, fx: { ...daily, status: 'cached', ...(history ? { history } : {}) }, fetchedAt },
+    true,
+  );
 }
 
 export async function refreshPagesData() {
@@ -106,7 +147,8 @@ export async function refreshPagesData() {
         cache: 'no-store',
       });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      published = parseMarketResponse(await response.json(), true);
+      published = validDataset(await response.json());
+      if (!published) throw new Error('Ungültige veröffentlichte Marktdaten.');
       console.log('Vorher veröffentlichter echter Datenstand für den Ausfallschutz geladen.');
     } catch (error) {
       console.warn(
@@ -137,7 +179,25 @@ export async function refreshPagesData() {
       `EZB-Aktualisierung fehlgeschlagen: ${(error as Error).message}; letzter Referenzkurs bleibt erhalten.`,
     );
   }
-  const data = mergePagesData({ fallback: snapshotData, published, updates, fxUpdate, errors });
+  let fxHistoryUpdate: FxHistory | undefined;
+  try {
+    fxHistoryUpdate = await fetchFreshFxHistory();
+    console.log(
+      `EUR/USD: ${fxHistoryUpdate.rates.length} echte Referenzkurse bis ${fxHistoryUpdate.asOf} abgerufen.`,
+    );
+  } catch (error) {
+    console.warn(
+      `EZB-Historie nicht aktualisiert: ${(error as Error).message}; letzter gültiger historischer Datenstand bleibt erhalten.`,
+    );
+  }
+  const data = mergePagesData({
+    fallback: snapshotData,
+    published,
+    updates,
+    fxUpdate,
+    fxHistoryUpdate,
+    errors,
+  });
   const output = resolve(process.env.PAGES_DATA_FILE || '.pages-data/market-data.json');
   await mkdir(dirname(output), { recursive: true });
   const temporary = `${output}.${process.pid}.tmp`;

@@ -1,9 +1,44 @@
 import { describe, expect, it } from 'vitest';
 import { mergePagesData } from '../scripts/refresh-pages-data';
-import snapshotData from '../src/data/market-snapshot.json';
-import type { MarketResponse, MarketSeries } from '../src/lib/types';
+import { INSTRUMENTS } from '../src/data/catalog';
+import type { FxHistory, MarketResponse, MarketSeries } from '../src/lib/types';
 
-const snapshot = snapshotData as MarketResponse;
+// Deliberately synthetic fixtures: refreshing real bundled data must not move unit-test dates.
+const snapshot: MarketResponse = {
+  series: Object.fromEntries(
+    INSTRUMENTS.map((instrument) => [
+      instrument.symbol,
+      {
+        symbol: instrument.symbol,
+        currency: instrument.currency,
+        prices: [
+          { date: '2026-11-05', close: 100 },
+          { date: '2026-11-06', close: 110 },
+        ],
+        source: 'Synthetische Testdaten',
+        sourceUrl: 'https://example.com/market-test',
+        fetchedAt: '2026-11-06T21:26:20.520Z',
+        asOf: '2026-11-06',
+        status: 'cached',
+      },
+    ]),
+  ),
+  fx: { eurUsd: 1.1165, date: '2026-11-06', source: 'Synthetische Testdaten', status: 'cached' },
+  fetchedAt: '2026-11-06T21:26:20.520Z',
+};
+const history = (date = '2026-11-06'): FxHistory => ({
+  base: 'EUR',
+  quote: 'USD',
+  rates: [
+    { date: '2026-11-04', eurUsd: 1.1 },
+    { date, eurUsd: 1.2 },
+  ],
+  source: 'Synthetische EUR/USD-Testdaten',
+  sourceUrl: 'https://www.ecb.europa.eu/stats/eurofxref/eurofxref-hist.xml',
+  fetchedAt: `${date}T23:00:00.000Z`,
+  asOf: date,
+  status: 'fresh',
+});
 function newer(symbol: string, date = '2026-11-09', close = 500): MarketSeries {
   const original = snapshot.series[symbol];
   return {
@@ -99,6 +134,123 @@ describe('static Pages data refresh', () => {
     const published = { ...snapshot, fx };
     const data = mergePagesData({ fallback: snapshot, published, fxUpdate: snapshot.fx });
     expect(data.fx).toEqual({ ...fx, status: 'cached' });
+  });
+
+  it('keeps the published FX history when daily FX advances but historical retrieval fails', () => {
+    const previousHistory = history('2026-11-09');
+    const published = { ...snapshot, fx: { ...snapshot.fx, history: previousHistory } };
+    const daily = { ...snapshot.fx, date: '2026-11-10', eurUsd: 1.3, status: 'fresh' as const };
+    const data = mergePagesData({ fallback: snapshot, published, fxUpdate: daily });
+    expect(data.fx.date).toBe('2026-11-10');
+    expect(data.fx.eurUsd).toBe(1.3);
+    expect(data.fx.history).toEqual({ ...previousHistory, status: 'cached' });
+    expect(data.fx.history?.fetchedAt).toBe('2026-11-09T23:00:00.000Z');
+    expect(data.fetchedAt).toBe('2026-11-09T23:00:00.000Z');
+  });
+
+  it('advances historical FX even when only its provider request succeeds', () => {
+    const nextHistory = history('2026-11-09');
+    const data = mergePagesData({ fallback: snapshot, fxHistoryUpdate: nextHistory });
+    expect(data.fx.date).toBe(snapshot.fx.date);
+    expect(data.fx.history).toEqual({ ...nextHistory, status: 'cached' });
+    expect(data.fetchedAt).toBe(nextHistory.fetchedAt);
+    expect(nextHistory.status).toBe('fresh');
+  });
+
+  it('accepts an embedded historical FX update independently of its older daily quote', () => {
+    const latest = history('2026-11-09');
+    const published = { ...snapshot, fx: { ...snapshot.fx, date: '2026-11-10', eurUsd: 1.3 } };
+    const data = mergePagesData({
+      fallback: snapshot,
+      published,
+      fxUpdate: { ...snapshot.fx, history: latest },
+    });
+    expect(data.fx.date).toBe('2026-11-10');
+    expect(data.fx.history?.asOf).toBe('2026-11-09');
+  });
+
+  it('never regresses the historical reference date for a later retrieval of older observations', () => {
+    const previousHistory = history('2026-11-09');
+    const older = { ...history(), fetchedAt: '2026-11-10T23:00:00.000Z' };
+    const data = mergePagesData({
+      fallback: snapshot,
+      published: { ...snapshot, fx: { ...snapshot.fx, history: previousHistory } },
+      fxHistoryUpdate: older,
+    });
+    expect(data.fx.history?.asOf).toBe(previousHistory.asOf);
+    expect(data.fx.history?.fetchedAt).toBe(previousHistory.fetchedAt);
+  });
+
+  it('retains wider same-date history instead of replacing it with a shortened response', () => {
+    const previousHistory = history('2026-11-09');
+    const shorter = {
+      ...previousHistory,
+      rates: [{ date: '2026-11-05', eurUsd: 1.15 }, previousHistory.rates[1]],
+      fetchedAt: '2026-11-10T23:00:00.000Z',
+    };
+    const data = mergePagesData({
+      fallback: snapshot,
+      published: { ...snapshot, fx: { ...snapshot.fx, history: previousHistory } },
+      fxHistoryUpdate: shorter,
+    });
+    expect(data.fx.history?.rates).toEqual(previousHistory.rates);
+    expect(data.fx.history?.fetchedAt).toBe(previousHistory.fetchedAt);
+  });
+
+  it('retains original history metadata and does not splice retrievals into an invented series', () => {
+    const previousHistory = history();
+    const latest = {
+      ...history('2026-11-09'),
+      rates: [
+        { date: '2026-11-07', eurUsd: 1.15 },
+        { date: '2026-11-09', eurUsd: 1.3 },
+      ],
+    };
+    const data = mergePagesData({
+      fallback: { ...snapshot, fx: { ...snapshot.fx, history: previousHistory } },
+      fxHistoryUpdate: latest,
+    });
+    expect(data.fx.history?.rates).toEqual(latest.rates);
+    expect(data.fx.history?.fetchedAt).toBe(latest.fetchedAt);
+    data.fx.history!.rates[0].eurUsd = 2;
+    expect(latest.rates[0].eurUsd).toBe(1.15);
+  });
+
+  it('isolates malformed historical FX without discarding newer valid published instruments or daily FX', () => {
+    const vti = newer('VTI');
+    const invalidHistory = {
+      ...history('2026-11-09'),
+      rates: [{ date: '2026-11-09', eurUsd: -1 }],
+    };
+    const published = {
+      ...snapshot,
+      series: { ...snapshot.series, VTI: vti },
+      fx: { ...snapshot.fx, date: '2026-11-09', history: invalidHistory },
+      fetchedAt: vti.fetchedAt,
+    };
+    const data = mergePagesData({
+      fallback: { ...snapshot, fx: { ...snapshot.fx, history: history() } },
+      published,
+    });
+    expect(data.series.VTI.asOf).toBe(vti.asOf);
+    expect(data.fx.date).toBe('2026-11-09');
+    expect(data.fx.history?.asOf).toBe('2026-11-06');
+  });
+
+  it('ignores malformed/unavailable historical candidates without inventing missing history', () => {
+    const unavailable = {
+      ...history(),
+      rates: [],
+      asOf: '',
+      fetchedAt: '',
+      status: 'unavailable' as const,
+    };
+    const data = mergePagesData({ fallback: snapshot, fxHistoryUpdate: unavailable });
+    expect(data.fx.history).toBeUndefined();
+    const malformed = { ...history(), rates: [{ date: '2026-11-06', eurUsd: 0 }] };
+    expect(
+      mergePagesData({ fallback: snapshot, fxHistoryUpdate: malformed }).fx.history,
+    ).toBeUndefined();
   });
 
   it('does not prefer an unavailable FX record over a usable older reference rate', () => {

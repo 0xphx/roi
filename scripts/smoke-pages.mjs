@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile, stat } from 'node:fs/promises';
+import { tsImport } from 'tsx/esm/api';
+const { parseMarketResponse } = await tsImport('../src/lib/market-client.ts', import.meta.url);
 const root = new URL('../dist/pages/', import.meta.url);
 const base = `${(process.env.PAGES_BASE_PATH || '/roi/').replace(/\/$/, '')}/`;
 const html = await readFile(new URL('index.html', root), 'utf8');
@@ -19,9 +21,17 @@ for (const asset of assets) {
       'Kein Asset darf ungewollt außerhalb des Projektpfads laden.',
     );
 }
-const data = JSON.parse(await readFile(new URL('market-data.json', root), 'utf8'));
+const data = parseMarketResponse(
+  JSON.parse(await readFile(new URL('market-data.json', root), 'utf8')),
+);
 assert.equal(Object.keys(data.series).length, 14);
 assert.ok(data.fx.eurUsd > 0 && /^\d{4}-\d{2}-\d{2}$/.test(data.fx.date));
+assert.equal(data.fx.status, 'cached');
+if (data.fx.history) {
+  assert.equal(data.fx.history.status, 'cached');
+  assert.ok(data.fx.history.rates.length > 1);
+  assert.equal(data.fx.history.asOf, data.fx.history.rates.at(-1).date);
+}
 for (const [symbol, series] of Object.entries(data.series)) {
   assert.equal(series.symbol, symbol);
   assert.equal(series.status, 'cached');
@@ -32,5 +42,5 @@ for (const [symbol, series] of Object.entries(data.series)) {
 }
 assert.equal((await stat(new URL('.nojekyll', root))).size, 0);
 console.log(
-  `GitHub-Pages-Prüfung erfolgreich: Projektpfad ${base}, alle Assets und 14 datierte echte Kursreihen.`,
+  `GitHub-Pages-Prüfung erfolgreich: Projektpfad ${base}, alle Assets, 14 datierte echte Kursreihen und ${data.fx.history?.rates.length ?? 0} geprüfte historische EUR/USD-Referenzkurse.`,
 );

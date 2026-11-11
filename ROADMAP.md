@@ -1,6 +1,6 @@
 # Roadmap
 
-Stand: 9. November 2026. Die Reihenfolge priorisiert nachvollziehbare Berechnungen und den praktischen Nutzen der lokalen GitHub-Pages-Anwendung.
+Stand: 11. November 2026. Die Reihenfolge priorisiert nachvollziehbare Berechnungen und den praktischen Nutzen der lokalen GitHub-Pages-Anwendung.
 
 ## Grundlage — umgesetzt in 1.0
 
@@ -19,14 +19,20 @@ Stand: 9. November 2026. Die Reihenfolge priorisiert nachvollziehbare Berechnung
 - Bis zu vier Strategien mit identischen Einzahlungen, Kosten, Rebalancing und gemeinsamen Kurstagen vergleichen.
 - Neues Kapital rechnerisch auf untergewichtete Positionen verteilen, ohne Verkäufe; Verteilung als CSV ausgeben.
 
-## Daten und Währungsrisiko — nächster Schritt
+## Historische Währungsumrechnung — umgesetzt in 1.2
 
-- Historische EUR/USD-Reihen mit Quellen- und Abrufinformationen einbinden.
-- Historische EUR-Renditen mit tatsächlichen Wechselkursen statt des derzeit konstanten Referenzkurses berechnen.
-- Auswirkungen der Währungsumrechnung getrennt ausweisen und Datenlücken ausdrücklich markieren.
-- Das Instrumentenuniversum gezielt um europäische ETFs erweitern, sobald zuverlässige Kurs- und Identifikationsdaten vorhanden sind.
+- Historische EUR/USD-Reihen der EZB mit Quellen- und ursprünglichen Abrufinformationen.
+- EUR-Modellhistorie, Risikokennzahlen, Korrelationen, Backtests und Strategievergleiche mit tagesgenauen Referenzkursen, einschließlich SPY.
+- Vergleich des heutigen Bestands mit festem Start-Wechselkurs auf denselben Tagen; Renditedifferenz in Prozentpunkten und ausgelassene Tage sichtbar.
+- Keine Auffüllung fehlender Referenzkurse und getrennte Ausfallsicherung im Serverbetrieb sowie auf GitHub Pages.
 
-Abnahme: reproduzierbare Umrechnung an tatsächlichen Kurstagen, geprüfte Ausfallpfade und keine erfundenen Ersatzkurse.
+Abnahme: reproduzierbare Umrechnung an tatsächlichen Kurstagen, geprüfte Ausfallpfade und keine erfundenen Ersatzkurse. Bestände, Pläne und Sicherungsformate bleiben unverändert.
+
+## Instrumentenuniversum — nächster Schritt
+
+- Das Angebot gezielt um europäische ETFs erweitern, sobald zuverlässige Kurs- und Identifikationsdaten vorhanden sind.
+- Handelswährung, Börsenplatz und Fondsvariante eindeutig zuordnen; Kurslücken sowie Ausschüttungs- und Bereinigungskonventionen offenlegen.
+- Referenzdaten und unterschiedliche Währungsfälle durch Tests absichern. Das heutige Angebot bleibt ein begrenztes Analyseuniversum.
 
 ## Tatsächlicher Depotverlauf — danach
 

@@ -15,10 +15,18 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import type { AssetClass, MarketResponse, MarketSeries, Plan, Workspace } from '../lib/types';
-import { backtest, monteCarlo, portfolioHistory, riskMetrics, stressTest } from '../lib/analytics';
+import type { AssetClass, MarketResponse, Plan, Workspace } from '../lib/types';
+import {
+  backtest,
+  correlationMatrix,
+  monteCarlo,
+  portfolioHistory,
+  riskMetrics,
+  stressTest,
+} from '../lib/analytics';
 import { INSTRUMENTS } from '../data/catalog';
 import { parseWorkspace } from '../lib/workspace';
+import { FxHistoryDetails } from './CurrencyImpact';
 import './analysis.css';
 
 export interface AnalysisPageProps {
@@ -446,51 +454,15 @@ export function PlannerPage({ workspace, market: _market, onChange }: AnalysisPa
   );
 }
 
-function correlations(symbols: string[], series: Record<string, MarketSeries>) {
-  const prices = Object.fromEntries(
-    symbols.map((symbol) => [
-      symbol,
-      new Map(
-        (series[symbol]?.prices || [])
-          .filter((p) => Number.isFinite(p.close) && p.close > 0)
-          .map((p) => [p.date, p.close]),
-      ),
-    ]),
-  ) as Record<string, Map<string, number>>;
-  return symbols.map((a) =>
-    symbols.map((b) => {
-      // Match price dates first, so stock/crypto comparisons measure the same interval.
-      const dates = [...prices[a].keys()].filter((day) => prices[b].has(day)).sort();
-      if (dates.length < 31) return null;
-      const pairs = dates
-        .slice(1)
-        .map((day, i) => [
-          prices[a].get(day)! / prices[a].get(dates[i])! - 1,
-          prices[b].get(day)! / prices[b].get(dates[i])! - 1,
-        ]);
-      const avgA = pairs.reduce((sum, pair) => sum + pair[0], 0) / pairs.length;
-      const avgB = pairs.reduce((sum, pair) => sum + pair[1], 0) / pairs.length;
-      let cov = 0,
-        varA = 0,
-        varB = 0;
-      for (const [x, y] of pairs) {
-        cov += (x - avgA) * (y - avgB);
-        varA += (x - avgA) ** 2;
-        varB += (y - avgB) ** 2;
-      }
-      return varA * varB > 0 ? Math.min(1, Math.max(-1, cov / Math.sqrt(varA * varB))) : null;
-    }),
-  );
-}
-
 export function RiskPage({ workspace, market, onChange }: AnalysisPageProps) {
-  const history = useMemo(
-    () =>
-      usable(workspace, market)
-        ? portfolioHistory(workspace.holdings, market.series, market.fx.eurUsd)
-        : [],
-    [workspace.holdings, market],
-  );
+  const historical = useMemo(() => {
+    try {
+      return { data: portfolioHistory(workspace.holdings, market.series, market.fx), error: '' };
+    } catch (error) {
+      return { data: [] as ReturnType<typeof portfolioHistory>, error: (error as Error).message };
+    }
+  }, [workspace.holdings, market]);
+  const history = historical.data;
   const risk = useMemo(
     () => riskMetrics(history, workspace.riskFreeRate),
     [history, workspace.riskFreeRate],
@@ -498,10 +470,13 @@ export function RiskPage({ workspace, market, onChange }: AnalysisPageProps) {
   const symbols = [
     ...new Set(workspace.holdings.filter((h) => h.quantity > 0).map((h) => h.symbol)),
   ].slice(0, 10);
-  const matrix = useMemo(
-    () => correlations(symbols, market.series),
-    [symbols.join(','), market.series],
-  );
+  const matrix = useMemo(() => {
+    try {
+      return correlationMatrix(symbols, market.series, market.fx);
+    } catch {
+      return symbols.map(() => symbols.map(() => null));
+    }
+  }, [symbols.join(','), market]);
   const sufficient = history.length >= 31;
   const drawdowns = history.map((p) => ({ date: p.date, drawdown: p.drawdown * 100 }));
   const latestValue = history.at(-1)?.value || 0;
@@ -513,8 +488,8 @@ export function RiskPage({ workspace, market, onChange }: AnalysisPageProps) {
       />
       {!sufficient ? (
         <NoData>
-          Für diese Auswertung werden mindestens 31 gemeinsame Kurstage benötigt. Prüfe, ob für alle
-          Positionen ausreichend Kursdaten vorliegen.
+          {historical.error ||
+            'Für diese Auswertung werden mindestens 31 gemeinsame Kurstage mit passenden Wechselkursen benötigt. Prüfe, ob für alle Positionen ausreichend Daten vorliegen.'}
         </NoData>
       ) : (
         <>
@@ -598,14 +573,14 @@ export function RiskPage({ workspace, market, onChange }: AnalysisPageProps) {
               <div className="card-header">
                 <div>
                   <h3>Korrelation</h3>
-                  <p className="muted">Korrelation der täglichen Renditen.</p>
+                  <p className="muted">Korrelation der täglichen EUR-Renditen.</p>
                 </div>
               </div>
               <div className="table-wrap">
                 <table className="correlation-table">
                   <thead>
                     <tr>
-                      <th>Asset</th>
+                      <th>Position</th>
                       {symbols.map((s) => (
                         <th key={s}>{s}</th>
                       ))}
@@ -618,7 +593,7 @@ export function RiskPage({ workspace, market, onChange }: AnalysisPageProps) {
                         {symbols.map((other, j) => (
                           <td key={other}>
                             <span
-                              title={`${s} / ${other}: ${matrix[i][j] === null ? 'Zu wenige Daten' : number.format(matrix[i][j]!)}`}
+                              title={`${s} / ${other}: ${matrix[i][j] === null ? 'Zu wenige Daten oder keine Schwankung' : number.format(matrix[i][j]!)}`}
                               style={{
                                 background:
                                   matrix[i][j] === null
@@ -627,7 +602,12 @@ export function RiskPage({ workspace, market, onChange }: AnalysisPageProps) {
                                 color: '#242424',
                               }}
                             >
-                              {matrix[i][j] === null ? '—' : matrix[i][j]!.toFixed(2)}
+                              {matrix[i][j] === null
+                                ? '—'
+                                : matrix[i][j]!.toLocaleString('de-DE', {
+                                    minimumFractionDigits: 2,
+                                    maximumFractionDigits: 2,
+                                  })}
                             </span>
                           </td>
                         ))}
@@ -665,7 +645,7 @@ export function RiskPage({ workspace, market, onChange }: AnalysisPageProps) {
               <div className="analysis-detail-row">
                 <div>
                   <strong>Gemeinsame Renditetage</strong>
-                  <small>Nur Tage mit Kursen für alle Positionen</small>
+                  <small>Gemeinsame Kurstage mit passenden Referenzkursen</small>
                 </div>
                 <b>{risk.observations.toLocaleString('de-DE')}</b>
               </div>
@@ -692,13 +672,15 @@ export function RiskPage({ workspace, market, onChange }: AnalysisPageProps) {
           </div>
         </>
       )}
+      <FxHistoryDetails fx={market.fx} />
       <ModelNote>
         Die Analyse bewertet heutige Stückzahlen rückwirkend und bildet keinen tatsächlichen
         Depotverlauf ab. Renditen zwischen gemeinsamen Kurstagen werden mit 252 Beobachtungen pro
         Jahr annualisiert; für reine Krypto-Portfolios kann dies von Kalendertagen abweichen. VaR
         und Expected Shortfall sind empirische Verlustmaße für einen Tag, keine Verlustobergrenzen.
-        EUR-Werte verwenden den aktuellen EUR/USD-Referenzkurs; historische Währungseffekte fehlen.
-        Korrelationen sind keine Garantie für Diversifikation in Krisen.
+        USD-Werte und Korrelationen werden mit den historischen EZB-Referenzkursen in EUR berechnet.
+        Es zählen nur gemeinsame Kurstage mit passendem Referenzkurs; fehlende Tage werden nicht
+        aufgefüllt. Korrelationen sind keine Garantie für Diversifikation in Krisen.
       </ModelNote>
     </>
   );
@@ -980,15 +962,13 @@ export function BacktestPage({ workspace, market }: AnalysisPageProps) {
     period,
   });
   const [error, setError] = useState('');
-  const result = useMemo(() => {
+  const calculation = useMemo(() => {
     const active = workspace.holdings.filter((h) => h.targetWeight > 0);
-    if (
-      !active.length ||
-      market.fx.eurUsd <= 0 ||
-      market.fx.status === 'unavailable' ||
-      !active.every((h) => (market.series[h.symbol]?.prices.length || 0) >= 2)
-    )
-      return null;
+    if (!active.length || !active.every((h) => (market.series[h.symbol]?.prices.length || 0) >= 2))
+      return {
+        result: null,
+        error: 'Für den Backtest fehlen Zielgewichte oder ausreichende Kursdaten.',
+      };
     try {
       const latest = Math.min(
         ...active.map((h) => Date.parse(market.series[h.symbol]?.prices.at(-1)?.date || '')),
@@ -1002,11 +982,12 @@ export function BacktestPage({ workspace, market }: AnalysisPageProps) {
           { ...data, prices: data.prices.filter((p) => p.date >= cutoff) },
         ]),
       );
-      return backtest(workspace.holdings, filtered, market.fx.eurUsd, submitted);
-    } catch {
-      return null;
+      return { result: backtest(workspace.holdings, filtered, market.fx, submitted), error: '' };
+    } catch (error) {
+      return { result: null, error: (error as Error).message };
     }
   }, [workspace.holdings, market, submitted]);
+  const result = calculation.result;
   const chartData =
     result?.points.map((p) => ({
       ...p,
@@ -1088,8 +1069,8 @@ export function BacktestPage({ workspace, market }: AnalysisPageProps) {
       </form>
       {!good ? (
         <NoData>
-          Für das Backtesting werden gemeinsame Kurstage und Zielgewichte im Portfolio benötigt. Der
-          gewählte Zeitraum kann höchstens so lang sein wie die verfügbare gemeinsame Historie.
+          {calculation.error ||
+            'Für das Backtesting werden gemeinsame Kurstage, passende Wechselkurse und Zielgewichte benötigt. Der Zeitraum kann sich durch fehlende Daten verkürzen.'}
         </NoData>
       ) : (
         <>
@@ -1258,13 +1239,17 @@ export function BacktestPage({ workspace, market }: AnalysisPageProps) {
           </div>
         </>
       )}
+      <FxHistoryDetails fx={market.fx} />
       <ModelNote>
         Rückrechnung mit historischen verfügbaren Kursen und heutigen Zielgewichten. Einzahlungen
         und Rebalancing erfolgen am ersten verfügbaren Handelstag des jeweiligen Monats bzw. Jahres.
         Keine Steuern, Spreads oder Ordergebühren; Zusatzkosten werden separat abgezogen; in
-        ETF-Kursen enthaltene Fondskosten sind bereits berücksichtigt. EUR-Bewertung mit aktuellem
-        Referenzkurs, ohne historische Währungseffekte. Kursanpassungen hängen von der Datenquelle
-        ab. Vergangene Ergebnisse erlauben keine Aussage über künftige Renditen.
+        ETF-Kursen enthaltene Fondskosten sind bereits berücksichtigt. USD-Werte und der
+        SPY-Vergleich werden mit dem tatsächlichen EZB-Referenzkurs desselben Tages in EUR bewertet.
+        Tage ohne gemeinsamen Kurs oder Referenzkurs entfallen, ohne Auffüllung. EZB-Referenzkurse
+        sind keine Ausführungskurse und werden zu einer anderen Tageszeit als US-Schlusskurse
+        festgestellt. Kursanpassungen hängen von der Datenquelle ab. Vergangene Ergebnisse erlauben
+        keine Aussage über künftige Renditen.
       </ModelNote>
     </>
   );

@@ -63,6 +63,7 @@ import { PlannerPage, RiskPage, StressPage, BacktestPage } from './components/An
 import { ComparePage } from './components/ComparePage';
 import { PortfolioManager } from './components/PortfolioManager';
 import { CashRebalance } from './components/CashRebalance';
+import { CurrencyImpact, FxHistoryDetails } from './components/CurrencyImpact';
 
 type Page =
   'overview' | 'portfolio' | 'planner' | 'risk' | 'stress' | 'backtest' | 'compare' | 'markets';
@@ -357,10 +358,14 @@ export default function App() {
     () => currentPortfolio(workspace.holdings, market.series, market.fx.eurUsd),
     [workspace.holdings, market],
   );
-  const history = useMemo(
-    () => portfolioHistory(workspace.holdings, market.series, market.fx.eurUsd),
-    [workspace.holdings, market],
-  );
+  const historical = useMemo(() => {
+    try {
+      return { data: portfolioHistory(workspace.holdings, market.series, market.fx), error: '' };
+    } catch (error) {
+      return { data: [] as ReturnType<typeof portfolioHistory>, error: (error as Error).message };
+    }
+  }, [workspace.holdings, market]);
+  const history = historical.data;
   const risk = useMemo(
     () => riskMetrics(history, workspace.riskFreeRate),
     [history, workspace.riskFreeRate],
@@ -603,13 +608,18 @@ export default function App() {
                 />
               </div>
               <div className="overview-charts">
-                <PortfolioChart history={history} />
+                <PortfolioChart
+                  history={history}
+                  error={historical.error}
+                  hasHoldings={workspace.holdings.some((holding) => holding.quantity > 0)}
+                />
                 <AllocationCard
                   positions={portfolio.positions}
                   value={portfolio.value}
                   onDetails={() => navigate('portfolio')}
                 />
               </div>
+              <CurrencyImpact workspace={workspace} market={market} />
               <div className="section-heading">
                 <div>
                   <h2>
@@ -891,9 +901,9 @@ export default function App() {
             <span>
               EZB-Referenzkurs vom {dateLabel(market.fx.date)}: 1 EUR ={' '}
               {decimal(market.fx.eurUsd, 4)} USD (
-              {market.fx.status === 'fresh' ? 'aktualisiert' : 'gespeichert'}). Historische
-              EUR-Werte verwenden diesen konstanten Kurs; historische Währungseffekte werden nicht
-              abgebildet.{' '}
+              {market.fx.status === 'fresh' ? 'aktualisiert' : 'gespeichert'}). Dieser Kurs dient
+              der aktuellen Bestandsbewertung. Historische USD-Werte werden mit dem jeweiligen
+              EZB-Referenzkurs desselben Tages in EUR umgerechnet.{' '}
               <a
                 href="https://www.ecb.europa.eu/stats/policy_and_exchange_rates/euro_reference_exchange_rates/html/index.en.html"
                 target="_blank"
@@ -903,6 +913,7 @@ export default function App() {
               </a>
             </span>
           </div>
+          <FxHistoryDetails fx={market.fx} />
           <p className="small muted">
             Kursreihen sind nach Möglichkeit um Ausschüttungen und Splits bereinigt. Das eingebaute
             Offline-Abbild enthält echte abgerufene Marktdaten. Ein Cache-Fallback behält Abruf- und
@@ -922,7 +933,7 @@ export default function App() {
               {
                 icon: Activity,
                 title: 'Historische Analyse',
-                text: 'Die Übersicht rechnet den heutigen Bestand rückwirkend mit bereinigten Tageskursen. Sie zeigt eine Modellrechnung, keine tatsächliche Depotperformance. Nur gemeinsame Handelstage aller Positionen werden verwendet.',
+                text: 'Die Übersicht rechnet den heutigen Bestand rückwirkend mit Tageskursen und den historischen EUR/USD-Referenzkursen der EZB. Sie zeigt eine Modellrechnung, keine tatsächliche Depotperformance. Es gelten nur gemeinsame Kurs- und Referenztage; fehlende Werte werden nicht aufgefüllt.',
               },
               {
                 icon: ShieldCheck,
@@ -937,7 +948,7 @@ export default function App() {
               {
                 icon: ChartNoAxesCombined,
                 title: 'Backtesting',
-                text: 'Zielgewichte, Sparraten und laufende Gebühren werden auf tatsächliche gemeinsame Kurstage angewendet. Der S&P-500-ETF SPY dient als Vergleich. Steuern, Spreads, Handelsgebühren und historische Wechselkurse fehlen.',
+                text: 'Zielgewichte, Sparraten und laufende Gebühren werden auf gemeinsame Kurstage mit tatsächlichen EZB-Referenzkursen angewendet. Der S&P-500-ETF SPY dient als Vergleich und wird ebenfalls historisch in EUR bewertet. Steuern, Spreads und Handelsgebühren fehlen.',
               },
               {
                 icon: ShieldCheck,
@@ -1060,7 +1071,15 @@ function Metric({ label, value, note }: { label: string; value: string; note: Re
     </div>
   );
 }
-function PortfolioChart({ history }: { history: ReturnType<typeof portfolioHistory> }) {
+function PortfolioChart({
+  history,
+  error,
+  hasHoldings,
+}: {
+  history: ReturnType<typeof portfolioHistory>;
+  error: string;
+  hasHoldings: boolean;
+}) {
   const [period, setPeriod] = useState('5J');
   const [benchmark, setBenchmark] = useState(true);
   const data = useMemo(() => {
@@ -1084,7 +1103,7 @@ function PortfolioChart({ history }: { history: ReturnType<typeof portfolioHisto
               {pct(gain, true)}
             </span>
           </h2>
-          <p className="muted">Heutiger Bestand rückgerechnet · Wechselkurs konstant</p>
+          <p className="muted">Heutiger Bestand rückgerechnet · historische Wechselkurse</p>
         </div>
         <div className="period-tabs" aria-label="Zeitraum">
           {['1M', '6M', '1J', '3J', '5J'].map((p) => (
@@ -1152,8 +1171,13 @@ function PortfolioChart({ history }: { history: ReturnType<typeof portfolioHisto
         </div>
       ) : (
         <div className="empty-state">
-          <h3>Noch keine Kursentwicklung</h3>
-          <p>Füge Positionen hinzu, um ihre Entwicklung zu sehen.</p>
+          <h3>{hasHoldings ? 'Keine auswertbare Historie' : 'Noch keine Kursentwicklung'}</h3>
+          <p>
+            {error ||
+              (hasHoldings
+                ? 'Für die vorhandenen Positionen fehlen gemeinsame Kurs- oder Referenztage.'
+                : 'Füge Positionen hinzu, um ihre Entwicklung zu sehen.')}
+          </p>
         </div>
       )}
       <div className="chart-legend">

@@ -11,6 +11,7 @@ import {
   YAxis,
 } from 'recharts';
 import { compareStrategies } from '../lib/analytics';
+import { FxHistoryDetails } from './CurrencyImpact';
 import type { BacktestOptions } from '../lib/analytics';
 import type { PortfolioLibrary } from '../lib/portfolio-library';
 import type { MarketResponse, MarketSeries } from '../lib/types';
@@ -165,13 +166,6 @@ export function ComparePage({ library, market }: ComparePageProps) {
   const dirty = JSON.stringify({ ids: selection, settings }) !== JSON.stringify(submitted);
   const comparison = useMemo(() => {
     try {
-      if (
-        market.fx.status === 'unavailable' ||
-        !Number.isFinite(market.fx.eurUsd) ||
-        market.fx.eurUsd <= 0
-      ) {
-        throw new Error('Für die EUR-Bewertung fehlt ein gültiger EUR/USD-Referenzkurs.');
-      }
       const series = seriesForPeriod(library, market, submitted);
       const strategies = submitted.ids.map((id) => {
         const portfolio = library.portfolios.find((p) => p.id === id)!;
@@ -182,7 +176,7 @@ export function ComparePage({ library, market }: ComparePageProps) {
         };
       });
       return {
-        data: compareStrategies(strategies, series, market.fx.eurUsd, submitted.settings),
+        data: compareStrategies(strategies, series, market.fx, submitted.settings),
         error: '',
       };
     } catch (error) {
@@ -533,11 +527,7 @@ export function ComparePage({ library, market }: ComparePageProps) {
           </section>
           <details className="compare-sources">
             <summary>Datenquellen und Datenstand</summary>
-            <p>
-              {market.fx.source} · 1 EUR = {decimal(market.fx.eurUsd, 4)} USD · Stand{' '}
-              {dateLabel(market.fx.date)} ·{' '}
-              {market.fx.status === 'fresh' ? 'aktualisiert' : 'gespeichert'}
-            </p>
+            <FxHistoryDetails fx={market.fx} />
             <div className="table-wrap">
               <table>
                 <thead>
@@ -591,8 +581,9 @@ export function ComparePage({ library, market }: ComparePageProps) {
           Die Zielgewichte jedes Portfolios werden auf 100 % normiert. Alle Strategien starten mit
           demselben Kapital und erhalten dieselben monatlichen Einzahlungen. Verwendet werden
           ausschließlich gemeinsame tatsächliche Kurstage aller benötigten Instrumente
-          {hasBenchmark ? ' und des SPY-Benchmarks' : ''}; fehlende Kurse werden nicht aufgefüllt.
-          Der angefragte Zeitraum kann sich deshalb verkürzen.
+          {hasBenchmark ? ' und des SPY-Benchmarks' : ''} sowie der benötigten EZB-Referenzkurse;
+          fehlende Kurse werden nicht aufgefüllt. Der angefragte Zeitraum kann sich deshalb
+          verkürzen.
         </p>
         <p>
           Einzahlungen und Rebalancing erfolgen am ersten gemeinsamen Kurstag des jeweiligen Monats
@@ -604,11 +595,12 @@ export function ComparePage({ library, market }: ComparePageProps) {
             : 'Ohne passende SPY-Kurse wird kein Benchmark angezeigt.'}
         </p>
         <p>
-          EUR-Bewertung mit einem über die Historie konstant gehaltenen aktuellen
-          EUR/USD-Referenzkurs; historische Währungseffekte fehlen. Kursanpassungen hängen von der
-          Datenquelle ab. Die heutige Portfolioauswahl kann Auswahl- und Überlebensverzerrungen
-          enthalten. Die Rückrechnung ist keine Prognose; vergangene Ergebnisse erlauben keine
-          Aussage über künftige Renditen.
+          USD-Werte werden mit dem historischen EZB-Referenzkurs desselben Tages in EUR bewertet. Es
+          gibt keine Übernahme des letzten Kurses auf Wochenenden oder Datenlücken.
+          EZB-Referenzkurse sind keine Ausführungskurse und werden zu einer anderen Tageszeit als
+          US-Schlusskurse festgestellt. Kursanpassungen hängen von der Datenquelle ab. Die heutige
+          Portfolioauswahl kann Auswahl- und Überlebensverzerrungen enthalten. Die Rückrechnung ist
+          keine Prognose; vergangene Ergebnisse erlauben keine Aussage über künftige Renditen.
         </p>
       </aside>
     </>

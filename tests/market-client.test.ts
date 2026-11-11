@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { loadMarketData, parseMarketResponse } from '../src/lib/market-client';
-import type { MarketResponse } from '../src/lib/types';
+import { loadMarketData, parseFxHistory, parseMarketResponse } from '../src/lib/market-client';
+import type { FxHistory, MarketResponse } from '../src/lib/types';
 
 const sample = (): MarketResponse => ({
   series: {
@@ -20,6 +20,19 @@ const sample = (): MarketResponse => ({
   },
   fx: { eurUsd: 1.1165, date: '2026-11-06', source: 'Europäische Zentralbank', status: 'fresh' },
   fetchedAt: '2026-11-06T21:26:20.520Z',
+});
+const history = (): FxHistory => ({
+  base: 'EUR',
+  quote: 'USD',
+  rates: [
+    { date: '2026-11-05', eurUsd: 1.1 },
+    { date: '2026-11-06', eurUsd: 1.1165 },
+  ],
+  source: 'Europäische Zentralbank · historische EUR/USD-Referenzkurse',
+  sourceUrl: 'https://www.ecb.europa.eu/stats/eurofxref/eurofxref-hist.xml',
+  fetchedAt: '2026-11-06T21:26:20.520Z',
+  asOf: '2026-11-06',
+  status: 'fresh',
 });
 afterEach(() => vi.restoreAllMocks());
 
@@ -70,6 +83,94 @@ describe('market client on GitHub Pages', () => {
 });
 
 describe('market client response validation', () => {
+  it('accepts legacy datasets without silently inventing a historical exchange rate', () => {
+    const parsed = parseMarketResponse(sample(), true);
+    expect(parsed.fx.history).toBeUndefined();
+  });
+  it('preserves genuine FX observations and provenance independently of the daily reference', () => {
+    const data = sample();
+    data.fx.history = history();
+    data.fx.date = '2026-11-09';
+    data.fx.eurUsd = 1.2;
+    const parsed = parseMarketResponse(data, true);
+    expect(parsed.fx.eurUsd).toBe(1.2);
+    expect(parsed.fx.date).toBe('2026-11-09');
+    expect(parsed.fx.history).toEqual({ ...history(), status: 'cached' });
+    parsed.fx.history!.rates[0].eurUsd = 2;
+    expect(data.fx.history.rates[0].eurUsd).toBe(1.1);
+    expect(data.fx.history.status).toBe('fresh');
+  });
+  it('does not mark server FX history cached when the provider result is fresh', () => {
+    const data = sample();
+    data.fx.history = history();
+    expect(parseMarketResponse(data).fx.history?.status).toBe('fresh');
+  });
+  it.each([
+    { rates: [{ date: '2026-11-05', eurUsd: 1.1 }] },
+    { base: 'USD' },
+    { quote: 'EUR' },
+    { sourceUrl: 'javascript:alert(1)' },
+    { fetchedAt: 'missing' },
+    { fetchedAt: '2099-11-07T00:00:00Z' },
+    { asOf: '2026-11-05' },
+    { status: 'unknown' },
+    { error: 123 },
+    {
+      rates: [
+        { date: '2026-11-05', eurUsd: 0 },
+        { date: '2026-11-06', eurUsd: 1.1 },
+      ],
+    },
+    {
+      rates: [
+        { date: '2026-11-05', eurUsd: Number.POSITIVE_INFINITY },
+        { date: '2026-11-06', eurUsd: 1.1 },
+      ],
+    },
+    {
+      rates: [
+        { date: '2026-02-30', eurUsd: 1.1 },
+        { date: '2026-11-06', eurUsd: 1.1 },
+      ],
+    },
+    {
+      rates: [
+        { date: '2026-11-06', eurUsd: 1.1 },
+        { date: '2026-11-06', eurUsd: 1.1 },
+      ],
+    },
+    {
+      rates: [
+        { date: '2026-11-06', eurUsd: 1.1 },
+        { date: '2026-11-05', eurUsd: 1.1 },
+      ],
+    },
+    { fetchedAt: '2026-11-05T23:00:00Z' },
+    {
+      rates: [
+        { date: '2099-11-05', eurUsd: 1.1 },
+        { date: '2099-11-06', eurUsd: 1.1 },
+      ],
+      asOf: '2099-11-06',
+      fetchedAt: '2099-11-07T00:00:00Z',
+    },
+  ])('rejects malformed explicit FX history: %o', (override) => {
+    const data = sample();
+    data.fx.history = { ...history(), ...override } as FxHistory;
+    expect(() => parseMarketResponse(data)).toThrow('ungültig');
+  });
+  it('preserves explicitly unavailable FX history without filling daily fallback observations', () => {
+    const missing = {
+      ...history(),
+      rates: [],
+      asOf: '',
+      fetchedAt: '',
+      status: 'unavailable' as const,
+      error: 'Ausfall',
+    };
+    expect(parseFxHistory(missing, true)).toEqual(missing);
+    expect(() => parseFxHistory({ ...missing, rates: history().rates })).toThrow();
+  });
   it('retains server API semantics outside Pages', async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(Response.json(sample()));
     const result = await loadMarketData({ manual: true, pages: false, baseUrl: '/', fetcher });

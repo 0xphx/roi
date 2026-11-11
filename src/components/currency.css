@@ -1,0 +1,50 @@
+.currency-impact {
+  margin: 8px 0 38px;
+}
+.currency-period {
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.currency-values {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 24px;
+  margin: 0 0 20px;
+}
+.currency-values > div {
+  min-width: 0;
+}
+.currency-values dt {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.currency-values dd {
+  margin: 10px 0 0;
+  font-size: 24px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.4;
+}
+.fx-history-details {
+  margin: 20px 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.8;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 650px) {
+  .currency-impact .card-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+  .currency-values {
+    grid-template-columns: 1fr;
+    gap: 18px;
+  }
+  .currency-values dd {
+    margin-top: 4px;
+    font-size: 23px;
+  }
+}

@@ -1,5 +1,5 @@
 import { INSTRUMENT_BY_SYMBOL, INSTRUMENTS } from '../data/catalog';
-import type { MarketResponse, MarketSeries, PricePoint } from './types';
+import type { FxHistory, FxRatePoint, MarketResponse, MarketSeries, PricePoint } from './types';
 
 export interface LoadMarketDataOptions {
   manual: boolean;
@@ -38,6 +38,65 @@ function validSourceUrl(value: unknown): value is string {
   } catch {
     return false;
   }
+}
+
+/** Historical conversion only uses genuine observations with their original provenance. */
+export function parseFxHistory(value: unknown, staticFile = false): FxHistory {
+  if (
+    !isRecord(value) ||
+    value.base !== 'EUR' ||
+    value.quote !== 'USD' ||
+    !text(value.source) ||
+    !validSourceUrl(value.sourceUrl) ||
+    typeof value.status !== 'string' ||
+    !statuses.has(value.status) ||
+    !Array.isArray(value.rates) ||
+    value.rates.length > 25000 ||
+    (value.error !== undefined && typeof value.error !== 'string')
+  )
+    throw invalid();
+  const unavailable = value.status === 'unavailable';
+  if (unavailable) {
+    if (value.rates.length !== 0 || value.asOf !== '' || value.fetchedAt !== '') throw invalid();
+  } else if (
+    value.rates.length < 2 ||
+    !validDate(value.asOf) ||
+    !validTimestamp(value.fetchedAt) ||
+    Date.parse(value.fetchedAt) > Date.now() + 5 * 60 * 1000 ||
+    value.asOf > value.fetchedAt.slice(0, 10) ||
+    value.asOf > new Date().toISOString().slice(0, 10)
+  )
+    throw invalid();
+  const rates: FxRatePoint[] = [];
+  let previous = '';
+  for (const rate of value.rates) {
+    if (
+      !isRecord(rate) ||
+      !validDate(rate.date) ||
+      !positive(rate.eurUsd) ||
+      rate.date <= previous ||
+      rate.date > (value.asOf as string)
+    )
+      throw invalid();
+    rates.push({ date: rate.date, eurUsd: rate.eurUsd });
+    previous = rate.date;
+  }
+  if (!unavailable && rates.at(-1)?.date !== value.asOf) throw invalid();
+  return {
+    base: 'EUR',
+    quote: 'USD',
+    rates,
+    source: value.source,
+    sourceUrl: value.sourceUrl,
+    fetchedAt: value.fetchedAt as string,
+    asOf: value.asOf as string,
+    status: unavailable
+      ? 'unavailable'
+      : staticFile
+        ? 'cached'
+        : (value.status as FxHistory['status']),
+    ...(value.error === undefined ? {} : { error: value.error }),
+  };
 }
 
 /** Validate provenance and observations without filling gaps or inventing values. */
@@ -129,6 +188,7 @@ export function parseMarketResponse(value: unknown, staticFile = false): MarketR
           : staticFile
             ? 'cached'
             : (fx.status as MarketResponse['fx']['status']),
+      ...(fx.history === undefined ? {} : { history: parseFxHistory(fx.history, staticFile) }),
     },
     fetchedAt: value.fetchedAt,
   };

@@ -1,5 +1,15 @@
 # Änderungen
 
+## 1.2.0 — 2026-11-11
+
+- Historische EUR/USD-Referenzkurse der EZB mit Quelle, Kursdatum und ursprünglichem Abrufzeitpunkt.
+- Tagesgenaue EUR-Umrechnung in Modellhistorie, Risikoanalyse, Korrelationen, Backtest und Strategievergleich einschließlich SPY.
+- Währungseinfluss als Vergleich mit festem Start-Wechselkurs auf identischen Kurstagen; Differenz in Prozentpunkten und ausgelassene Tage sichtbar.
+- Keine Auffüllung fehlender Referenzkurse. Alte Daten ohne Historie bleiben lesbar, historische USD-Auswertungen zeigen dann einen Hinweis.
+- Getrennte Ausfallsicherung für aktuelle und historische Wechselkurse im Serverbetrieb und in der statischen Pages-Pipeline.
+- Echten Kursdaten-Snapshot über `npm run refresh:data` aktualisiert: 14 Instrumente und 1.289 historische EZB-Referenzkurse.
+- Portfolio-Speicherung und Sicherungsformate bleiben unverändert. Einstand und hypothetische Sofortbewertungen verwenden weiterhin den aktuellen Referenzkurs; tatsächliche historische Käufe werden nicht rekonstruiert.
+
 ## 1.1.1 — 2026-11-10
 
 - Portfoliowert stärker gewichtet und Zahlen in Bestands- und Rebalancing-Tabellen rechtsbündig ausgerichtet.

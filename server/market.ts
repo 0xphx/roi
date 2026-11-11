@@ -1,15 +1,19 @@
 import { INSTRUMENTS, INSTRUMENT_BY_SYMBOL } from '../src/data/catalog.ts';
 import snapshotData from '../src/data/market-snapshot.json' with { type: 'json' };
-import type { MarketResponse, MarketSeries, PricePoint } from '../src/lib/types.ts';
+import type { FxHistory, MarketResponse, MarketSeries, PricePoint } from '../src/lib/types.ts';
 
 const snapshot = snapshotData as MarketResponse;
 const TTL = 15 * 60 * 1000;
 const TIMEOUT = 9_000;
 const ECB_URL = 'https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml';
+export const ECB_HISTORY_URL = 'https://www.ecb.europa.eu/stats/eurofxref/eurofxref-hist.xml';
 const cache = new Map<string, { value: MarketSeries; expires: number }>();
 const inFlight = new Map<string, Promise<MarketSeries>>();
 let fxCache: { value: MarketResponse['fx']; expires: number } | undefined;
 let fxInFlight: Promise<MarketResponse['fx']> | undefined;
+let fxHistoryCache: { value: FxHistory; expires: number } | undefined;
+let fxHistoryInFlight: Promise<FxHistory | undefined> | undefined;
+let fxHistoryRetryAt = 0;
 let refreshAllowedAt = 0;
 
 export function yahooUrl(symbol: string): string {
@@ -117,16 +121,71 @@ export function parseStooq(
   };
 }
 
+function validDate(date: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return false;
+  const timestamp = Date.parse(`${date}T00:00:00Z`);
+  return Number.isFinite(timestamp) && new Date(timestamp).toISOString().slice(0, 10) === date;
+}
+
 export function parseEcb(xml: string): MarketResponse['fx'] {
   const date = xml.match(/time=['"](\d{4}-\d{2}-\d{2})['"]/)?.[1];
   const rate = xml.match(/currency=['"]USD['"]\s+rate=['"]([\d.]+)['"]/)?.[1];
   const eurUsd = Number(rate);
-  if (!date || !Number.isFinite(eurUsd) || eurUsd <= 0)
+  if (!date || !validDate(date) || !Number.isFinite(eurUsd) || eurUsd <= 0)
     throw new Error('Kein gültiger EZB-Referenzkurs.');
   return {
     eurUsd,
     date,
     source: 'Europäische Zentralbank · EUR/USD-Referenzkurs',
+    status: 'fresh',
+  };
+}
+
+/** ECB quotes USD per EUR. Keep actual dated observations only, without weekend fills. */
+export function parseEcbHistory(xml: string, fetchedAt = new Date().toISOString()): FxHistory {
+  if (
+    !/^\d{4}-\d{2}-\d{2}T/.test(fetchedAt) ||
+    !validDate(fetchedAt.slice(0, 10)) ||
+    !Number.isFinite(Date.parse(fetchedAt)) ||
+    xml.length > 10_000_000
+  )
+    throw new Error('Ungültige Abrufinformationen der EZB-Zeitreihe.');
+  const cutoff = new Date(`${fetchedAt.slice(0, 10)}T00:00:00Z`);
+  cutoff.setUTCFullYear(cutoff.getUTCFullYear() - 5);
+  cutoff.setUTCDate(cutoff.getUTCDate() - 10);
+  const firstDate = cutoff.toISOString().slice(0, 10);
+  const seen = new Set<string>();
+  const rates: FxHistory['rates'] = [];
+  // Day blocks are non-nested and contain self-closing currency observations in official ECB XML.
+  const dayBlocks = xml.matchAll(
+    /<(?:[\w-]+:)?Cube\b(?=[^>]*\btime\s*=)([^>]*)>([\s\S]*?)<\/(?:[\w-]+:)?Cube\s*>/g,
+  );
+  for (const [, attributes, children] of dayBlocks) {
+    const date = attributes.match(/\btime\s*=\s*(['"])(.*?)\1/)?.[2];
+    if (!date || !validDate(date) || date > fetchedAt.slice(0, 10) || seen.has(date))
+      throw new Error('Die EZB-Zeitreihe enthält ungültige oder doppelte Kurstage.');
+    seen.add(date);
+    const usd = [...children.matchAll(/<(?:[\w-]+:)?Cube\b([^>]*)\s*\/\s*>/g)]
+      .map(([, entry]) => entry)
+      .filter((entry) => /\bcurrency\s*=\s*(['"])USD\1/.test(entry));
+    if (usd.length !== 1)
+      throw new Error('Die EZB-Zeitreihe enthält keinen eindeutigen USD-Referenzkurs.');
+    const rawRate = usd[0].match(/\brate\s*=\s*(['"])(.*?)\1/)?.[2];
+    const eurUsd = Number(rawRate);
+    if (!rawRate || !/^\d+(?:\.\d+)?$/.test(rawRate) || !Number.isFinite(eurUsd) || eurUsd <= 0)
+      throw new Error('Die EZB-Zeitreihe enthält einen ungültigen USD-Referenzkurs.');
+    if (date >= firstDate) rates.push({ date, eurUsd });
+  }
+  rates.sort((a, b) => a.date.localeCompare(b.date));
+  if (rates.length < 2) throw new Error('Zu wenige datierte EUR/USD-Referenzkurse.');
+  return {
+    base: 'EUR',
+    quote: 'USD',
+    rates,
+    source: 'Europäische Zentralbank · historische EUR/USD-Referenzkurse',
+    sourceUrl: ECB_HISTORY_URL,
+    fetchedAt,
+    asOf: rates.at(-1)!.date,
     status: 'fresh',
   };
 }
@@ -170,6 +229,19 @@ export async function fetchFreshFx(): Promise<MarketResponse['fx']> {
   return parseEcb(await fetchText(ECB_URL));
 }
 
+export async function fetchFreshFxHistory(): Promise<FxHistory> {
+  const history = parseEcbHistory(await fetchText(ECB_HISTORY_URL));
+  const expectedStart = new Date(`${history.fetchedAt.slice(0, 10)}T00:00:00Z`);
+  expectedStart.setUTCFullYear(expectedStart.getUTCFullYear() - 5);
+  expectedStart.setUTCDate(expectedStart.getUTCDate() + 10);
+  if (
+    history.rates.length < 1000 ||
+    history.rates[0].date > expectedStart.toISOString().slice(0, 10)
+  )
+    throw new Error('Die EZB liefert keine ausreichend lange EUR/USD-Zeitreihe.');
+  return history;
+}
+
 function unavailable(symbol: string, error: string): MarketSeries {
   const saved = snapshot.series[symbol];
   if (saved?.prices.length) return { ...saved, status: 'cached', error };
@@ -210,8 +282,10 @@ async function loadSeries(symbol: string, refresh = false): Promise<MarketSeries
 }
 
 async function loadFx(refresh = false): Promise<MarketResponse['fx']> {
-  if (!refresh && fxCache && fxCache.expires > Date.now()) return fxCache.value;
+  if (!refresh && fxCache && fxCache.expires > Date.now())
+    return { ...fxCache.value, history: await loadFxHistory(refresh) };
   if (fxInFlight) return fxInFlight;
+  const historyPromise = loadFxHistory(refresh);
   fxInFlight = fetchFreshFx()
     .then((value) => {
       fxCache = { value, expires: Date.now() + TTL };
@@ -226,10 +300,54 @@ async function loadFx(refresh = false): Promise<MarketResponse['fx']> {
       fxCache = { value, expires: Date.now() + TTL };
       return value;
     })
+    .then(async (value) => {
+      const history = await historyPromise;
+      return { ...value, ...(history ? { history } : {}) };
+    })
     .finally(() => {
       fxInFlight = undefined;
     });
   return fxInFlight;
+}
+
+/** Historical FX survives an independent daily-rate outage and retains original provenance. */
+async function loadFxHistory(refresh = false): Promise<FxHistory | undefined> {
+  if (!refresh && fxHistoryCache && fxHistoryCache.expires > Date.now())
+    return fxHistoryCache.value;
+  if (fxHistoryInFlight) return fxHistoryInFlight;
+  if (!refresh && Date.now() < fxHistoryRetryAt) return undefined;
+  const previous = fxHistoryCache?.value ?? snapshot.fx.history;
+  fxHistoryInFlight = fetchFreshFxHistory()
+    .then((fresh) => {
+      // An unexpectedly shorter or older response cannot silently shrink the historical data.
+      const value =
+        previous &&
+        previous.status !== 'unavailable' &&
+        (fresh.asOf < previous.asOf ||
+          fresh.rates[0].date > previous.rates.at(-1)!.date ||
+          (fresh.asOf === previous.asOf && fresh.rates.length < previous.rates.length))
+          ? { ...previous, status: 'cached' as const }
+          : fresh;
+      fxHistoryCache = { value, expires: Date.now() + TTL };
+      return value;
+    })
+    .catch((error) => {
+      fxHistoryRetryAt = Date.now() + TTL;
+      if (!previous || previous.status === 'unavailable' || previous.rates.length < 2)
+        return undefined;
+      const value: FxHistory = {
+        ...previous,
+        status: 'cached',
+        error:
+          error instanceof Error ? error.message : 'Historischer Wechselkursabruf fehlgeschlagen.',
+      };
+      fxHistoryCache = { value, expires: Date.now() + TTL };
+      return value;
+    })
+    .finally(() => {
+      fxHistoryInFlight = undefined;
+    });
+  return fxHistoryInFlight;
 }
 
 function json(data: unknown, status = 200): Response {

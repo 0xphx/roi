@@ -3,13 +3,15 @@ import {
   backtest,
   cashRebalance,
   compareStrategies,
+  correlationMatrix,
+  currencyImpact,
   currentPortfolio,
   monteCarlo,
   portfolioHistory,
   riskMetrics,
   stressTest,
 } from '../src/lib/analytics';
-import type { Holding, MarketSeries, Plan } from '../src/lib/types';
+import type { Holding, MarketResponse, MarketSeries, Plan } from '../src/lib/types';
 
 const holding = (symbol = 'VTI', overrides: Partial<Holding> = {}): Holding => ({
   id: symbol,
@@ -43,12 +45,340 @@ const plan: Plan = {
 };
 const options = { initialCapital: 100, monthlyContribution: 0, rebalance: 'none' as const, fee: 0 };
 
+function fxHistory(rows: [string, number][]): MarketResponse['fx'] {
+  return {
+    eurUsd: 99,
+    date: '2026-12-31',
+    source: 'current test fixture',
+    status: 'fresh',
+    history: {
+      base: 'EUR',
+      quote: 'USD',
+      rates: rows.map(([date, eurUsd]) => ({ date, eurUsd })),
+      source: 'dated test fixture',
+      sourceUrl: 'https://example.test/eur-usd',
+      fetchedAt: '2026-12-31T12:00:00Z',
+      asOf: rows.at(-1)?.[0] ?? '',
+      status: 'fresh',
+    },
+  };
+}
+
 function dailyRows(count: number, close: (index: number) => number): [string, number][] {
   return Array.from({ length: count }, (_, index) => [
     new Date(Date.UTC(2024, 0, 1 + index)).toISOString().slice(0, 10),
     close(index),
   ]);
 }
+
+describe('historical EUR/USD conversion', () => {
+  const rows: [string, number][] = [
+    ['2026-01-02', 100],
+    ['2026-01-05', 100],
+    ['2026-01-06', 100],
+  ];
+  const fx = fxHistory([
+    ['2026-01-02', 1],
+    ['2026-01-05', 2],
+    ['2026-01-06', 1.25],
+  ]);
+  const market = { VTI: series('VTI', rows), SPY: series('SPY', rows) };
+
+  it('converts each actual USD observation with its own rate, including the SPY benchmark', () => {
+    const result = portfolioHistory([holding()], market, fx);
+    expect(result.map((point) => point.value)).toEqual([100, 50, 80]);
+    expect(result.map((point) => point.benchmark)).toEqual([100, 50, 80]);
+    expect(result[1].drawdown).toBeCloseTo(-0.5);
+    expect(riskMetrics(result, 0).totalReturn).toBeCloseTo(-0.2);
+  });
+
+  it('keeps explicit scalar conversion as a separate fixed-rate model', () => {
+    const result = portfolioHistory([holding()], market, 2);
+    expect(result.map((point) => point.value)).toEqual([50, 50, 50]);
+    expect(result.map((point) => point.benchmark)).toEqual([50, 50, 50]);
+  });
+
+  it('does not forward-fill weekends, gaps, older or later FX observations', () => {
+    const gapped = fxHistory([
+      ['2026-01-02', 1],
+      ['2026-01-06', 2],
+    ]);
+    const result = portfolioHistory(
+      [holding('BTC-USD')],
+      {
+        'BTC-USD': series('BTC-USD', [
+          ['2026-01-01', 100],
+          ['2026-01-02', 100],
+          ['2026-01-03', 100],
+          ['2026-01-04', 100],
+          ['2026-01-05', 100],
+          ['2026-01-06', 100],
+          ['2026-01-07', 100],
+        ]),
+      },
+      gapped,
+    );
+    expect(result.map((point) => [point.date, point.value])).toEqual([
+      ['2026-01-02', 100],
+      ['2026-01-06', 50],
+    ]);
+  });
+
+  it('rejects absent historical FX instead of using the current reference rate', () => {
+    const currentOnly = { ...fx, history: undefined };
+    expect(() => portfolioHistory([holding()], market, currentOnly)).toThrow(/datierte EUR\/USD/);
+    expect(() => backtest([holding()], market, currentOnly, options)).toThrow(/datierte EUR\/USD/);
+    expect(() =>
+      compareStrategies(
+        [{ id: 'usd', name: 'USD', holdings: [holding()] }],
+        market,
+        currentOnly,
+        options,
+      ),
+    ).toThrow(/datierte EUR\/USD/);
+  });
+
+  it.each([
+    [0, 'zero'],
+    [-1, 'negative'],
+    [Number.NaN, 'NaN'],
+    [Number.POSITIVE_INFINITY, 'infinite'],
+    [Number.MIN_VALUE, 'reciprocal overflow'],
+  ])('rejects invalid historical rate %s (%s)', (rate) => {
+    const invalid = structuredClone(fx);
+    invalid.history!.rates[1].eurUsd = rate;
+    expect(() => portfolioHistory([holding()], market, invalid)).toThrow(/EUR\/USD/);
+  });
+
+  it('rejects duplicate, descending or impossible FX dates and an inconsistent data date', () => {
+    for (const rates of [
+      [fx.history!.rates[0], fx.history!.rates[0]],
+      [...fx.history!.rates].reverse(),
+      [{ date: '2026-02-30', eurUsd: 1 }],
+    ]) {
+      const invalid = { ...fx, history: { ...fx.history!, rates } };
+      expect(() => portfolioHistory([holding()], market, invalid)).toThrow(/EUR\/USD/);
+    }
+    expect(() =>
+      portfolioHistory([holding()], market, {
+        ...fx,
+        history: { ...fx.history!, asOf: '2026-01-07' },
+      }),
+    ).toThrow(/Datenstand/);
+  });
+
+  it('rejects unavailable, inverted or future-dated FX metadata', () => {
+    for (const patch of [
+      { status: 'unavailable' as const },
+      { base: 'USD' as const },
+      { quote: 'EUR' as const },
+      { fetchedAt: '2026-01-01T00:00:00Z' },
+    ]) {
+      const invalid = { ...fx, history: { ...fx.history!, ...patch } } as MarketResponse['fx'];
+      expect(() => portfolioHistory([holding()], market, invalid)).toThrow(/EUR\/USD/);
+    }
+  });
+
+  it('uses valid historical data even when the independent current rate is unavailable', () => {
+    const result = portfolioHistory([holding()], market, {
+      ...fx,
+      eurUsd: Number.NaN,
+      status: 'unavailable',
+    });
+    expect(result.at(-1)!.value).toBe(80);
+  });
+
+  it('keeps EUR-only histories independent of FX and omits an unconvertible USD benchmark', () => {
+    const currentOnly = { ...fx, history: undefined, eurUsd: Number.NaN };
+    const eurMarket = { ...market, VTI: series('VTI', rows, 'EUR') };
+    const result = portfolioHistory([holding()], eurMarket, currentOnly);
+    expect(result.map((point) => point.value)).toEqual([100, 100, 100]);
+    expect(result.every((point) => Number.isNaN(point.benchmark))).toBe(true);
+    const tested = backtest([holding()], eurMarket, currentOnly, options);
+    expect(tested.finalValue).toBe(100);
+    expect(tested.points.every((point) => Number.isNaN(point.benchmark))).toBe(true);
+    const compared = compareStrategies(
+      [{ id: 'eur', name: 'EUR', holdings: [holding()] }],
+      eurMarket,
+      currentOnly,
+      options,
+    );
+    expect(compared.points).toHaveLength(3);
+    expect(compared.points.every((point) => Number.isNaN(point.benchmark))).toBe(true);
+  });
+
+  it('converts a USD benchmark independently of an EUR-only portfolio', () => {
+    const result = portfolioHistory(
+      [holding()],
+      { ...market, VTI: series('VTI', rows, 'EUR') },
+      fx,
+    );
+    expect(result.map((point) => point.value)).toEqual([100, 100, 100]);
+    expect(result.map((point) => point.benchmark)).toEqual([100, 50, 80]);
+  });
+
+  it('never interprets another currency as EUR or USD', () => {
+    expect(() => portfolioHistory([holding()], { VTI: series('VTI', rows, 'CHF') }, fx)).toThrow(
+      /Kurswährung CHF/,
+    );
+  });
+
+  it('applies dated FX before deposits, preserving equal EUR cashflows in the benchmark', () => {
+    const prices: [string, number][] = [
+      ['2026-01-02', 100],
+      ['2026-02-02', 100],
+      ['2026-03-02', 100],
+    ];
+    const datedFx = fxHistory([
+      ['2026-01-02', 1],
+      ['2026-02-02', 2],
+      ['2026-03-02', 1],
+    ]);
+    const result = backtest(
+      [holding()],
+      { VTI: series('VTI', prices), SPY: series('SPY', prices) },
+      datedFx,
+      { ...options, monthlyContribution: 50 },
+    );
+    expect(result.points.map((point) => point.value)).toEqual([100, 100, 250]);
+    expect(result.points.map((point) => point.benchmark)).toEqual([100, 100, 250]);
+    expect(result.contributed).toBe(200);
+    expect(result.totalReturn).toBeCloseTo(0);
+  });
+
+  it('compares strategies on the joint asset, benchmark and FX intersection', () => {
+    const gapped = fxHistory([
+      ['2026-01-02', 1],
+      ['2026-01-06', 1.25],
+    ]);
+    const compared = compareStrategies(
+      [
+        { id: 'usd', name: 'USD', holdings: [holding()] },
+        { id: 'eur', name: 'EUR', holdings: [holding('BND')] },
+      ],
+      { ...market, BND: series('BND', rows, 'EUR') },
+      gapped,
+      options,
+    );
+    expect(compared.points.map((point) => point.date)).toEqual(['2026-01-02', '2026-01-06']);
+    expect(compared.points.at(-1)!.values).toEqual({ usd: 80, eur: 100 });
+    expect(compared.points.at(-1)!.benchmark).toBe(80);
+  });
+
+  it('refuses comparison when fewer than two exact FX dates remain', () => {
+    expect(() =>
+      compareStrategies(
+        [{ id: 'usd', name: 'USD', holdings: [holding()] }],
+        market,
+        fxHistory([['2026-01-02', 1]]),
+        options,
+      ),
+    ).toThrow(/gemeinsame Kurstage/);
+  });
+
+  it('isolates FX differences on identical dates and reports actual percentage points', () => {
+    const impacted = currencyImpact(
+      [holding()],
+      {
+        VTI: series('VTI', [
+          ['2026-01-01', 50],
+          ['2026-01-02', 100],
+          ['2026-01-05', 999],
+          ['2026-01-06', 120],
+          ['2026-01-07', 150],
+        ]),
+      },
+      fxHistory([
+        ['2026-01-02', 1],
+        ['2026-01-06', 2],
+      ]),
+    )!;
+    expect(impacted.startDate).toBe('2026-01-02');
+    expect(impacted.endDate).toBe('2026-01-06');
+    expect(impacted.observations).toBe(2);
+    expect(impacted.eurReturn).toBeCloseTo(-0.4);
+    expect(impacted.constantFxReturn).toBeCloseTo(0.2);
+    expect(impacted.contributionPp).toBeCloseTo(-60);
+    expect(impacted.fxReturn).toBeCloseTo(-0.5);
+    expect(1 + impacted.eurReturn).toBeCloseTo(
+      (1 + impacted.constantFxReturn) * (1 + impacted.fxReturn!),
+    );
+  });
+
+  it('does not claim one currency return for mixed EUR/USD holdings', () => {
+    const impacted = currencyImpact(
+      [holding('VTI'), holding('BND')],
+      { VTI: market.VTI, BND: series('BND', rows, 'EUR') },
+      fx,
+    )!;
+    expect(impacted.eurReturn).toBeCloseTo(-0.1);
+    expect(impacted.constantFxReturn).toBe(0);
+    expect(impacted.contributionPp).toBeCloseTo(-10);
+    expect(impacted.fxReturn).toBeNull();
+    expect(currencyImpact([], market, fx)).toBeNull();
+  });
+
+  it('leaves holdings, market series and FX input unchanged', () => {
+    const holdings = [holding()];
+    const before = structuredClone({ holdings, market, fx });
+    portfolioHistory(holdings, market, fx);
+    backtest(holdings, market, fx, options);
+    compareStrategies([{ id: 'a', name: 'A', holdings }], market, fx, options);
+    currencyImpact(holdings, market, fx);
+    expect({ holdings, market, fx }).toEqual(before);
+  });
+});
+
+describe('historical EUR correlations', () => {
+  it('measures shared FX variation in otherwise constant USD prices', () => {
+    const rows = dailyRows(35, () => 100);
+    const fx = fxHistory(dailyRows(35, (index) => 1 + (index % 5) / 10));
+    const market = { VTI: series('VTI', rows), BND: series('BND', rows) };
+    const matrix = correlationMatrix(['VTI', 'BND'], market, fx);
+    expect(matrix).toEqual([
+      [1, 1],
+      [1, 1],
+    ]);
+    expect(correlationMatrix(['VTI', 'BND'], market, 1)).toEqual([
+      [null, null],
+      [null, null],
+    ]);
+  });
+
+  it('requires at least31 exact shared FX observations and keeps constant EUR correlations unavailable', () => {
+    const rows = dailyRows(35, () => 100);
+    const market = { VTI: series('VTI', rows), BND: series('BND', rows, 'EUR') };
+    const insufficient = fxHistory(dailyRows(30, (index) => 1 + (index % 5) / 10));
+    expect(correlationMatrix(['VTI', 'BND'], market, insufficient)).toEqual([
+      [null, null],
+      [null, null],
+    ]);
+    const sufficient = fxHistory(dailyRows(31, (index) => 1 + (index % 5) / 10));
+    expect(correlationMatrix(['VTI', 'BND'], market, sufficient)).toEqual([
+      [1, null],
+      [null, null],
+    ]);
+  });
+
+  it('uses the same return intervals for each pair instead of comparing unrelated missing dates', () => {
+    const rows = dailyRows(40, (index) => 100 + index * index);
+    const selected = rows.filter((_, index) => index % 7 !== 0);
+    const fx = fxHistory(dailyRows(40, (index) => 1 + (index % 4) / 10));
+    const matrix = correlationMatrix(
+      ['VTI', 'BND'],
+      {
+        VTI: series('VTI', rows),
+        BND: series(
+          'BND',
+          selected.map(([date, close]) => [date, close * 2]),
+        ),
+      },
+      fx,
+    );
+    expect(matrix[0][1]).toBeCloseTo(1);
+    expect(matrix[1][0]).toBeCloseTo(1);
+  });
+});
 
 describe('portfolio valuations', () => {
   it('converts native share costs and latest prices into EUR', () => {

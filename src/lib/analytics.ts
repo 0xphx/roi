@@ -1,5 +1,5 @@
 import { INSTRUMENTS } from '../data/catalog';
-import type { AssetClass, Holding, MarketSeries, Plan, PricePoint } from './types';
+import type { AssetClass, Holding, MarketResponse, MarketSeries, Plan, PricePoint } from './types';
 
 /** Daily observations use 252 trading days per year; rates are fractions, not percentages. */
 const TRADING_DAYS = 252;
@@ -10,6 +10,9 @@ const instrumentBySymbol = new Map(
 );
 const finite = (value: number) => Number.isFinite(value);
 const positive = (value: number) => finite(value) && value > 0;
+
+/** A number explicitly requests the legacy fixed-rate model; objects require dated USD rates. */
+export type HistoricalFx = number | MarketResponse['fx'];
 
 /** Actual/Actual calendar years: costs accrue through weekends, including leap years. */
 function elapsedYears(from: string, to: string): number {
@@ -69,6 +72,92 @@ function validPrices(series?: MarketSeries): PricePoint[] {
     }
   }
   return [...deduplicated.values()].sort((left, right) => left.date.localeCompare(right.date));
+}
+
+function validCalendarDate(value: unknown): value is string {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const time = Date.parse(`${value}T00:00:00Z`);
+  return finite(time) && new Date(time).toISOString().slice(0, 10) === value;
+}
+
+/** Historical FX must never fall back to today's reference rate or silently repair bad rows. */
+function historicalRates(fx: Exclude<HistoricalFx, number>): Map<string, number> {
+  const history = fx?.history;
+  if (!history || history.status === 'unavailable' || !history.rates?.length) {
+    throw new RangeError(
+      'Für die historische EUR-Auswertung fehlen datierte EUR/USD-Referenzkurse. Bitte Marktdaten aktualisieren.',
+    );
+  }
+  if (
+    history.base !== 'EUR' ||
+    history.quote !== 'USD' ||
+    !validCalendarDate(history.asOf) ||
+    !finite(Date.parse(history.fetchedAt)) ||
+    history.asOf > history.fetchedAt.slice(0, 10)
+  ) {
+    throw new RangeError('Die historischen EUR/USD-Referenzkurse sind ungültig.');
+  }
+  const rates = new Map<string, number>();
+  let previousDate = '';
+  for (const point of history.rates) {
+    if (
+      !point ||
+      !validCalendarDate(point.date) ||
+      point.date <= previousDate ||
+      !positive(point.eurUsd) ||
+      !positive(1 / point.eurUsd)
+    ) {
+      throw new RangeError(
+        'Historische EUR/USD-Referenzkurse müssen gültig, positiv, eindeutig und aufsteigend datiert sein.',
+      );
+    }
+    rates.set(point.date, point.eurUsd);
+    previousDate = point.date;
+  }
+  if (previousDate !== history.asOf) {
+    throw new RangeError('Der Datenstand der historischen EUR/USD-Referenzkurse ist ungültig.');
+  }
+  return rates;
+}
+
+/** Only exact, positive EUR observations survive. Missing FX days are omitted, never filled. */
+function historicalEuroPrices(market: MarketSeries | undefined, fx: HistoricalFx) {
+  const points = validPrices(market);
+  const prices = new Map<string, number>();
+  if (!market || !points.length) return prices;
+  if (typeof fx === 'number' || market.currency === 'EUR') {
+    const factor = euroFactor(market.currency, typeof fx === 'number' ? fx : 1);
+    if (!positive(factor)) return prices;
+    for (const point of points) {
+      const value = point.close * factor;
+      if (positive(value)) prices.set(point.date, value);
+    }
+    return prices;
+  }
+  if (market.currency !== 'USD') {
+    throw new RangeError(
+      `Die Kurswährung ${market.currency || 'unbekannt'} von ${market.symbol} wird nicht unterstützt. Erlaubt sind EUR und USD.`,
+    );
+  }
+  const rates = historicalRates(fx);
+  for (const point of points) {
+    const rate = rates.get(point.date);
+    if (rate === undefined) continue;
+    const value = point.close / rate;
+    if (!positive(value)) throw new RangeError('Ein historisch umgerechneter Kurs ist ungültig.');
+    prices.set(point.date, value);
+  }
+  return prices;
+}
+
+/** Optional benchmarks never impose an FX requirement on EUR-only holdings. */
+function historicalBenchmark(series: Record<string, MarketSeries>, fx: HistoricalFx) {
+  if (series.SPY?.symbol !== 'SPY') return new Map<string, number>();
+  try {
+    return historicalEuroPrices(series.SPY, fx);
+  } catch {
+    return new Map<string, number>();
+  }
 }
 
 /**
@@ -135,18 +224,20 @@ export function currentPortfolio(
  * Intersect actual dates across every selected asset. No forward fill, backfill,
  * retrospective asset substitution, or silently omitted missing instrument.
  */
-function alignedPrices(holdings: Holding[], series: Record<string, MarketSeries>, eurUsd: number) {
+function alignedPrices(
+  holdings: Holding[],
+  series: Record<string, MarketSeries>,
+  fx: HistoricalFx,
+) {
   const symbols = [...new Set(holdings.map((holding) => holding.symbol))];
   if (symbols.length === 0)
     return { dates: [] as string[], prices: new Map<string, Map<string, number>>() };
   const prices = new Map<string, Map<string, number>>();
   for (const symbol of symbols) {
     const market = series[symbol];
-    const factor = euroFactor(market?.currency ?? '', eurUsd);
-    if (!finite(factor)) return { dates: [] as string[], prices };
-    const points = validPrices(market);
-    if (!points.length) return { dates: [] as string[], prices };
-    prices.set(symbol, new Map(points.map((point) => [point.date, point.close * factor])));
+    const converted = historicalEuroPrices(market, fx);
+    if (!converted.size) return { dates: [] as string[], prices };
+    prices.set(symbol, converted);
   }
   const firstDates = [...prices.get(symbols[0])!.keys()];
   const dates = firstDates
@@ -158,17 +249,17 @@ function alignedPrices(holdings: Holding[], series: Record<string, MarketSeries>
 /**
  * Revalues today's fixed share quantities over historical common trading dates.
  * This is a model portfolio history, not a reconstruction of actual transactions.
- * Current FX is held constant throughout; historical currency gains are excluded.
+ * Objects use the exact historical EUR/USD observation; a number is an explicit fixed-rate model.
  */
 export function portfolioHistory(
   holdings: Holding[],
   series: Record<string, MarketSeries>,
-  eurUsd: number,
+  fx: HistoricalFx,
 ): PortfolioPoint[] {
   const active = holdings.filter((holding) => positive(holding.quantity));
-  const { dates, prices } = alignedPrices(active, series, eurUsd);
+  const { dates, prices } = alignedPrices(active, series, fx);
   if (!dates.length) return [];
-  const spy = new Map(validPrices(series.SPY).map((point) => [point.date, point.close]));
+  const spy = historicalBenchmark(series, fx);
   const firstBenchmark = spy.get(dates[0]);
   let peak = 0;
   let initial = 0;
@@ -187,6 +278,101 @@ export function portfolioHistory(
       drawdown: peak > 0 ? value / peak - 1 : 0,
     };
   });
+}
+
+export interface CurrencyImpact {
+  startDate: string;
+  endDate: string;
+  observations: number;
+  /** Cumulative EUR return of today's fixed holdings, using dated reference rates. */
+  eurReturn: number;
+  /** Same holdings/dates, with the start day's EUR/USD rate held constant. */
+  constantFxReturn: number;
+  /** Difference between the two cumulative returns, in percentage points (not a fraction). */
+  contributionPp: number;
+  /** Start EUR/USD divided by end EUR/USD minus one; only meaningful for all-USD holdings. */
+  fxReturn: number | null;
+}
+
+/**
+ * Isolates the difference to a start-rate counterfactual on exactly the same dates.
+ * The percentage-point difference includes the interaction of asset and currency
+ * returns; it is not an independent/additive attribution of portfolio profits.
+ */
+export function currencyImpact(
+  holdings: Holding[],
+  series: Record<string, MarketSeries>,
+  fx: MarketResponse['fx'],
+): CurrencyImpact | null {
+  const history = portfolioHistory(holdings, series, fx);
+  if (history.length < 2 || !positive(history[0].value)) return null;
+  const active = holdings.filter((holding) => positive(holding.quantity));
+  const hasUsd = active.some((holding) => series[holding.symbol]?.currency === 'USD');
+  const rates = hasUsd ? historicalRates(fx) : null;
+  const startDate = history[0].date;
+  const endDate = history.at(-1)!.date;
+  const dates = new Set(history.map((point) => point.date));
+  const referenceRate = rates?.get(startDate) ?? 1;
+  const aligned = Object.fromEntries(
+    Object.entries(series).map(([symbol, market]) => [
+      symbol,
+      { ...market, prices: market.prices.filter((point) => dates.has(point.date)) },
+    ]),
+  );
+  const constant = portfolioHistory(active, aligned, referenceRate);
+  if (constant.length !== history.length || !positive(constant[0]?.value)) return null;
+  const eurReturn = history.at(-1)!.value / history[0].value - 1;
+  const constantFxReturn = constant.at(-1)!.value / constant[0].value - 1;
+  const allUsd =
+    active.length > 0 && active.every((holding) => series[holding.symbol]?.currency === 'USD');
+  return {
+    startDate,
+    endDate,
+    observations: history.length,
+    eurReturn,
+    constantFxReturn,
+    contributionPp: (eurReturn - constantFxReturn) * 100,
+    fxReturn: allUsd && rates ? referenceRate / rates.get(endDate)! - 1 : null,
+  };
+}
+
+/** Pairwise EUR return correlations on identical genuine dates; no FX/price filling. */
+export function correlationMatrix(
+  symbols: string[],
+  series: Record<string, MarketSeries>,
+  fx: HistoricalFx,
+): (number | null)[][] {
+  const prices = new Map(
+    [...new Set(symbols)].map((symbol) => [symbol, historicalEuroPrices(series[symbol], fx)]),
+  );
+  return symbols.map((left) =>
+    symbols.map((right) => {
+      const leftPrices = prices.get(left)!;
+      const rightPrices = prices.get(right)!;
+      const dates = [...leftPrices.keys()].filter((date) => rightPrices.has(date)).sort();
+      if (dates.length < 31) return null;
+      const pairs = dates
+        .slice(1)
+        .map((date, index) => [
+          leftPrices.get(date)! / leftPrices.get(dates[index])! - 1,
+          rightPrices.get(date)! / rightPrices.get(dates[index])! - 1,
+        ]);
+      const avgLeft = sum(pairs.map(([value]) => value)) / pairs.length;
+      const avgRight = sum(pairs.map(([, value]) => value)) / pairs.length;
+      let covariance = 0;
+      let varianceLeft = 0;
+      let varianceRight = 0;
+      for (const [leftReturn, rightReturn] of pairs) {
+        covariance += (leftReturn - avgLeft) * (rightReturn - avgRight);
+        varianceLeft += (leftReturn - avgLeft) ** 2;
+        varianceRight += (rightReturn - avgRight) ** 2;
+      }
+      const scale = Math.sqrt(varianceLeft * varianceRight);
+      return positive(scale) && finite(covariance)
+        ? Math.min(1, Math.max(-1, covariance / scale))
+        : null;
+    }),
+  );
 }
 
 export function quantile(sortedValues: number[], probability: number): number {
@@ -405,7 +591,7 @@ export interface BacktestPoint {
 export function backtest(
   holdings: Holding[],
   series: Record<string, MarketSeries>,
-  eurUsd: number,
+  fx: HistoricalFx,
   options: BacktestOptions,
 ) {
   const empty = {
@@ -436,9 +622,9 @@ export function backtest(
       holding.symbol,
       (weights.get(holding.symbol) ?? 0) + holding.targetWeight / weightSum,
     );
-  const { dates, prices } = alignedPrices(active, series, eurUsd);
+  const { dates, prices } = alignedPrices(active, series, fx);
   if (!dates.length) return empty;
-  const spy = new Map(validPrices(series.SPY).map((point) => [point.date, point.close]));
+  const spy = historicalBenchmark(series, fx);
   const firstBenchmark = spy.get(dates[0]);
   let benchmarkShares = firstBenchmark ? options.initialCapital / firstBenchmark : Number.NaN;
   const shares = new Map<string, number>();
@@ -596,12 +782,13 @@ function requireMarketSeries(
  * Sämtliche positiv gewichteten Instrumente begrenzen gemeinsam den Zeitraum.
  * Ein verfügbarer SPY-Vergleich begrenzt ihn zusätzlich auf seine tatsächlichen
  * Kurstage; ohne verwertbare SPY-Historie bleibt die Benchmark ausdrücklich NaN.
- * Historische Wechselkurse, Steuern und Handelskosten sind wie im Backtest nicht enthalten.
+ * Ein FX-Objekt schränkt USD-Daten zusätzlich auf tatsächliche EUR/USD-Referenztage ein.
+ * Ein numerischer Kurs wählt ausdrücklich die frühere konstante Umrechnung.
  */
 export function compareStrategies(
   strategies: ComparisonStrategy[],
   series: Record<string, MarketSeries>,
-  eurUsd: number,
+  fx: HistoricalFx,
   options: BacktestOptions,
 ): ComparisonResult {
   if (!Array.isArray(strategies) || strategies.length < 1 || strategies.length > 4) {
@@ -642,10 +829,15 @@ export function compareStrategies(
 
   const relevantSeries: Record<string, MarketSeries> = {};
   for (const symbol of requiredSymbols) {
-    const checked = requireMarketSeries(symbol, series, eurUsd, 2);
-    relevantSeries[symbol] = { ...checked.market, prices: checked.prices };
+    const checked = requireMarketSeries(symbol, series, typeof fx === 'number' ? fx : 1, 2);
+    const converted = historicalEuroPrices(checked.market, fx);
+    relevantSeries[symbol] = {
+      ...checked.market,
+      prices: checked.prices.filter((point) => converted.has(point.date)),
+    };
   }
-  const benchmarkPrices = validPrices(series.SPY);
+  const benchmark = historicalBenchmark(series, fx);
+  const benchmarkPrices = validPrices(series.SPY).filter((point) => benchmark.has(point.date));
   if (benchmarkPrices.length >= 2 && series.SPY.symbol === 'SPY') {
     relevantSeries.SPY = { ...series.SPY, prices: benchmarkPrices };
     requiredSymbols.add('SPY');
@@ -669,7 +861,7 @@ export function compareStrategies(
   const results = strategies.map((strategy) => ({
     id: strategy.id,
     name: strategy.name,
-    result: backtest(strategy.holdings, alignedSeries, eurUsd, options),
+    result: backtest(strategy.holdings, alignedSeries, fx, options),
   }));
   const points = dates.map((date, index) => ({
     date,

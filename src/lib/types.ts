@@ -23,9 +23,31 @@ export interface MarketSeries {
   status: 'fresh' | 'cached' | 'unavailable';
   error?: string;
 }
+export interface FxRatePoint {
+  date: string;
+  /** US dollars per euro, matching the ECB reference-rate quotation. */
+  eurUsd: number;
+}
+export interface FxHistory {
+  base: 'EUR';
+  quote: 'USD';
+  rates: FxRatePoint[];
+  source: string;
+  sourceUrl: string;
+  fetchedAt: string;
+  asOf: string;
+  status: 'fresh' | 'cached' | 'unavailable';
+  error?: string;
+}
 export interface MarketResponse {
   series: Record<string, MarketSeries>;
-  fx: { eurUsd: number; date: string; source: string; status: 'fresh' | 'cached' | 'unavailable' };
+  fx: {
+    eurUsd: number;
+    date: string;
+    source: string;
+    status: 'fresh' | 'cached' | 'unavailable';
+    history?: FxHistory;
+  };
   fetchedAt: string;
 }
 export interface Holding {
